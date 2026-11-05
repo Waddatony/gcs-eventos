@@ -1,0 +1,14 @@
+{
+  "name": "gcs-eventos",
+  "version": "1.0.0",
+  "description": "Prototipo de sistema de gestión de eventos para Global Consulting Services (Metodologías ágiles, Tecmilenio)",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "npx --yes serve -l 8080 .",
+    "test": "node --test tests/*.test.js"
+  },
+  "devDependencies": {
+    "sql.js": "1.10.3"
+  }
+}
