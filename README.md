@@ -33,7 +33,9 @@ Prototipo funcional para **Global Consulting Services (GCS)**, desarrollado por 
 
 ## 2. Cómo usarlo
 
-**En línea:** GitHub Pages (ver el enlace en la descripción del repositorio).
+**En línea:** https://waddatony.github.io/gcs-eventos/
+
+**Product Backlog (tablero):** https://github.com/users/Waddatony/projects/1 · [Issues](https://github.com/Waddatony/gcs-eventos/issues?q=is%3Aissue) · [Sprints (milestones)](https://github.com/Waddatony/gcs-eventos/milestones?state=all)
 
 **En tu computadora:**
 ```bash
