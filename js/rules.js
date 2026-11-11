@@ -1,52 +1,17 @@
-// Reglas de negocio de GCS Eventos.
-// Aquí vive toda la lógica que en Mendix serían los microflows: validaciones,
-// cálculos automáticos, permisos por rol y operaciones sobre los datos.
+// Reglas de negocio de GCS Eventos (microflujos de la Actividad 3).
+// Aquí vive la lógica que en Mendix serían los microflows: validaciones,
+// cálculos automáticos y operaciones sobre los datos. Los sub-microflujos
+// reutilizables (permisos, bitácora, notificaciones) están en subflujos.js.
 
 import { fechaLocal } from './db.js';
 import { hashPassword, randomSalt, validarPassword } from './security.js';
+import { ReglaError, puede, exigir, registrarBitacora, notificar, destinatariosPorSegmento } from './subflujos.js';
 
-export class ReglaError extends Error {
-  constructor(mensaje, errores = {}) {
-    super(mensaje);
-    this.name = 'ReglaError';
-    this.errores = errores; // { campo: 'mensaje' } para pintarlos junto a cada campo
-  }
-}
+export { ReglaError, puede, registrarBitacora };
 
 export const TIPOS_EVENTO = ['Capacitación', 'Conferencia', 'Reunión con cliente', 'Taller', 'Evento interno'];
 export const ESTADOS_EVENTO = ['Planeado', 'Confirmado', 'Cancelado'];
 export const ROLES = ['Administrador', 'Organizador', 'Colaborador'];
-
-// ---------------------------------------------------------------- Permisos
-const PERMISOS = {
-  'evento.crear':           ['Administrador', 'Organizador'],
-  'evento.editar':          ['Administrador', 'Organizador'], // organizador: solo los suyos
-  'evento.eliminar':        ['Administrador', 'Organizador'], // organizador: solo los suyos
-  'inscripcion.gestionar':  ['Administrador', 'Organizador', 'Colaborador'],
-  'asistencia.registrar':   ['Administrador', 'Organizador', 'Colaborador'],
-  'participante.gestionar': ['Administrador', 'Organizador', 'Colaborador'],
-  'participante.eliminar':  ['Administrador'],
-  'sede.gestionar':         ['Administrador'],
-  'usuario.gestionar':      ['Administrador'],
-  'bitacora.ver':           ['Administrador'],
-};
-
-export function puede(usuario, accion, evento = null) {
-  if (!usuario || !PERMISOS[accion]?.includes(usuario.rol)) return false;
-  if (evento && usuario.rol === 'Organizador' && (accion === 'evento.editar' || accion === 'evento.eliminar')) {
-    return evento.organizador_id === usuario.id;
-  }
-  return true;
-}
-
-function exigir(usuario, accion, evento = null) {
-  if (!puede(usuario, accion, evento)) throw new ReglaError('No tienes permiso para realizar esta acción');
-}
-
-export function registrarBitacora(db, usuario, accion, entidad, entidadId = null, detalle = '') {
-  db.run('INSERT INTO bitacora (usuario_id, accion, entidad, entidad_id, detalle) VALUES (?,?,?,?,?)',
-    [usuario?.id ?? null, accion, entidad, entidadId, detalle]);
-}
 
 // ---------------------------------------------------------------- Autenticación
 const intentosFallidos = new Map();
@@ -139,8 +104,23 @@ export function guardarEvento(db, usuario, d, { id = null, hoy = fechaLocal() } 
       db.run(`UPDATE eventos SET titulo=?, descripcion=?, tipo=?, sede_id=?, fecha=?, hora_inicio=?, hora_fin=?,
               capacidad=?, presupuesto=?, estado=? WHERE id=?`, [...valores, id]);
       registrarBitacora(db, usuario, 'Editar', 'evento', id, texto(d.titulo));
-      // Si se amplió la capacidad, se promueve automáticamente a la lista de espera.
-      promoverListaEspera(db, usuario, id);
+      if ((d.estado || 'Planeado') === 'Cancelado' && anterior.estado !== 'Cancelado') {
+        avisarCancelacion(db, id, texto(d.titulo));
+      } else {
+        // Si cambió la fecha, la hora o la sede, se avisa a todos los inscritos (SUB_Notificar).
+        const cambio = anterior.fecha !== d.fecha || anterior.hora_inicio !== d.hora_inicio
+          || anterior.hora_fin !== d.hora_fin || anterior.sede_id !== Number(d.sede_id);
+        if (cambio) {
+          const sede = db.get('SELECT nombre FROM sedes WHERE id = ?', [Number(d.sede_id)]).nombre;
+          notificar(db, destinatariosPorSegmento(db, id, 'Todos'), {
+            tipo: 'Evento modificado', eventoId: id,
+            titulo: `Cambios en "${texto(d.titulo)}"`,
+            texto: `Nueva programación: ${d.fecha}, de ${d.hora_inicio} a ${d.hora_fin}, en ${sede}.`,
+          });
+        }
+        // Si se amplió la capacidad, se promueve automáticamente a la lista de espera.
+        promoverListaEspera(db, usuario, id);
+      }
       return id;
     }
     const { lastId } = db.run(`INSERT INTO eventos (titulo, descripcion, tipo, sede_id, fecha, hora_inicio, hora_fin,
@@ -166,9 +146,19 @@ export function cancelarEvento(db, usuario, id) {
   const ev = db.get('SELECT * FROM eventos WHERE id = ?', [id]);
   if (!ev) throw new ReglaError('El evento no existe');
   exigir(usuario, 'evento.editar', ev);
-  db.transaction(() => {
+  if (ev.estado === 'Cancelado') throw new ReglaError('El evento ya estaba cancelado');
+  return db.transaction(() => {
     db.run("UPDATE eventos SET estado = 'Cancelado' WHERE id = ?", [id]);
     registrarBitacora(db, usuario, 'Cancelar', 'evento', id, ev.titulo);
+    return avisarCancelacion(db, id, ev.titulo);
+  });
+}
+
+function avisarCancelacion(db, eventoId, titulo) {
+  return notificar(db, destinatariosPorSegmento(db, eventoId, 'Todos'), {
+    tipo: 'Evento cancelado', eventoId,
+    titulo: `Se canceló "${titulo}"`,
+    texto: 'El organizador canceló el evento. Tu inscripción y tus tareas de este evento quedan sin efecto.',
   });
 }
 
@@ -211,6 +201,12 @@ function eventoAbierto(ev, hoy) {
 
 export function inscribir(db, usuario, eventoId, participanteId, hoy = fechaLocal()) {
   exigir(usuario, 'inscripcion.gestionar');
+  return inscribirSinPermiso(db, usuario, eventoId, participanteId, hoy);
+}
+
+// Núcleo del microflujo de inscripción. Lo reutilizan inscribir() (personal de GCS)
+// y autoRegistro() de microflujos.js (el propio asistente desde la página pública).
+export function inscribirSinPermiso(db, usuario, eventoId, participanteId, hoy = fechaLocal()) {
   const ev = db.get('SELECT * FROM v_eventos_resumen WHERE id = ?', [eventoId]);
   eventoAbierto(ev, hoy);
   const p = db.get('SELECT * FROM participantes WHERE id = ?', [participanteId]);
@@ -228,6 +224,11 @@ export function inscribir(db, usuario, eventoId, participanteId, hoy = fechaLoca
       db.run('INSERT INTO inscripciones (evento_id, participante_id, estado) VALUES (?,?,?)', [eventoId, participanteId, estado]);
     }
     registrarBitacora(db, usuario, 'Inscribir', 'evento', eventoId, `${p.nombre} → ${estado}`);
+    notificar(db, [participanteId], estado === 'Confirmado'
+      ? { tipo: 'Inscripción', eventoId, titulo: `Tu lugar en "${ev.titulo}" está confirmado`,
+          texto: `Te esperamos el ${ev.fecha} de ${ev.hora_inicio} a ${ev.hora_fin} en ${ev.sede}.` }
+      : { tipo: 'Lista de espera', eventoId, titulo: `Estás en lista de espera de "${ev.titulo}"`,
+          texto: 'El evento está lleno. Si se libera un lugar, te confirmaremos automáticamente.' });
   });
   return estado;
 }
@@ -238,11 +239,15 @@ function promoverListaEspera(db, usuario, eventoId) {
     const ev = db.get('SELECT capacidad, confirmados FROM v_eventos_resumen WHERE id = ?', [eventoId]);
     if (!ev || ev.confirmados >= ev.capacidad) break;
     const sig = db.get(
-      `SELECT i.id, p.nombre FROM inscripciones i JOIN participantes p ON p.id = i.participante_id
+      `SELECT i.id, i.participante_id, p.nombre FROM inscripciones i JOIN participantes p ON p.id = i.participante_id
         WHERE i.evento_id = ? AND i.estado = 'Lista de espera' ORDER BY i.fecha_registro, i.id LIMIT 1`, [eventoId]);
     if (!sig) break;
     db.run("UPDATE inscripciones SET estado = 'Confirmado' WHERE id = ?", [sig.id]);
     registrarBitacora(db, usuario, 'Promover', 'evento', eventoId, `${sig.nombre} pasó de lista de espera a confirmado`);
+    const titulo = db.get('SELECT titulo FROM eventos WHERE id = ?', [eventoId]).titulo;
+    notificar(db, [sig.participante_id], { tipo: 'Promoción', eventoId,
+      titulo: `¡Se liberó un lugar! Ya estás confirmado en "${titulo}"`,
+      texto: 'Pasaste de la lista de espera a confirmado.' });
     promovidos.push(sig.nombre);
   }
   return promovidos;
@@ -258,6 +263,9 @@ export function cancelarInscripcion(db, usuario, inscripcionId, hoy = fechaLocal
   return db.transaction(() => {
     db.run("UPDATE inscripciones SET estado = 'Cancelado', asistio = 0 WHERE id = ?", [inscripcionId]);
     registrarBitacora(db, usuario, 'Cancelar inscripción', 'evento', i.evento_id, i.nombre);
+    // Sus tareas pendientes de este evento quedan sin asignar para reasignarlas.
+    db.run(`UPDATE tareas SET responsable_id = NULL, actualizado_en = datetime('now','localtime')
+             WHERE evento_id = ? AND responsable_id = ? AND estado <> 'Completada'`, [i.evento_id, i.participante_id]);
     // Regla automática: el primero en lista de espera ocupa el lugar liberado.
     return promoverListaEspera(db, usuario, i.evento_id);
   });
