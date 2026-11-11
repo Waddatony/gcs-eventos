@@ -152,7 +152,7 @@ async def main(chrome):
         await pg.fill('#form-registro input[name=telefono]', '123')
         await pg.click('#form-registro button[type=submit]'); await pg.wait_for_timeout(300)
         errs = await pg.locator('#form-registro .con-error').count()
-        caso('E-11a', 'Excepción: auto-registro con datos inválidos y sin aceptar privacidad', errs >= 1)
+        caso('E-11a', 'Excepción: auto-registro con datos inválidos y sin aceptar privacidad marca todos los errores', errs >= 4, f'{errs} campos marcados')
         await shot(pg, '14-auto-registro-validaciones')
         await pg.fill('#form-registro input[name=nombre]', 'Laura Pérez'); await pg.fill('#form-registro input[name=email]', 'laura.perez@cliente.com')
         await pg.fill('#form-registro input[name=telefono]', '8112345678'); await pg.fill('#form-registro input[name=empresa]', 'Cliente Norte')

@@ -236,6 +236,8 @@ test('R-02 excepción: auto-registro duplicado, sin aviso de privacidad o con da
   assert.throws(() => M.autoRegistro(db, 1, { nombre: 'Ana Torres', email: 'ana.torres@gcs.com', acepta: 'on' }, HOY), /ya está inscrito/);
   assert.throws(() => M.autoRegistro(db, 4, { nombre: 'Luis', email: 'luis@x.com' }, HOY), /privacidad/);
   assert.throws(() => M.autoRegistro(db, 4, { nombre: 'Lu', email: 'mal', telefono: '12', acepta: 'on' }, HOY), e => !!(e.errores.nombre && e.errores.email && e.errores.telefono));
+  // Sin aceptar privacidad y con datos inválidos: se marcan todos los errores a la vez
+  assert.throws(() => M.autoRegistro(db, 4, { nombre: 'Lu', email: 'mal' }, HOY), e => !!(e.errores.nombre && e.errores.email && e.errores.acepta));
   assert.throws(() => M.autoRegistro(db, 5, { nombre: 'Luis Gómez', email: 'luis@x.com', acepta: 'on' }, HOY), /ya terminó/);
 });
 

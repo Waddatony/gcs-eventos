@@ -277,9 +277,12 @@ export function validarDatosAsistente(db, d, id = null) {
 // de asistentes y el núcleo del microflujo de inscripción (inscribirSinPermiso).
 export function autoRegistro(db, eventoId, d, hoy = fechaLocal()) {
   const ev = eventoActivo(db, eventoId, hoy);
-  if (!d.acepta) throw new ReglaError('Debes aceptar el aviso de privacidad', { acepta: 'Obligatorio' });
   const { errores, datos } = validarDatosAsistente(db, d, 'auto');
-  if (Object.keys(errores).length) throw new ReglaError('Revisa los campos marcados', errores);
+  if (!d.acepta) errores.acepta = 'Debes aceptar el aviso de privacidad';
+  if (Object.keys(errores).length) {
+    // Se reportan todos los errores a la vez para que la persona los corrija en un solo paso
+    throw new ReglaError(Object.keys(errores).length === 1 && errores.acepta ? 'Debes aceptar el aviso de privacidad' : 'Revisa los campos marcados', errores);
+  }
   return db.transaction(() => {
     let p = db.get('SELECT * FROM participantes WHERE email = ?', [datos.email]);
     if (!p) {

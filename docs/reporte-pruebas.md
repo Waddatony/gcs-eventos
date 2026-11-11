@@ -64,7 +64,7 @@ Se probaron los **casos comunes** (el flujo que se espera) y las **excepciones**
 | E-10a | El asistente ve en su portal el comunicado recién enviado | Común | ✅ Aprobado |
 | E-10b | El asistente actualiza el avance de su tarea desde el portal | Común | ✅ Aprobado |
 | E-10c | El asistente escribe al organizador | Común | ✅ Aprobado (tras corregir el problema 2) |
-| E-11a | Auto-registro con datos inválidos y sin aceptar privacidad | Excepción | ✅ Aprobado |
+| E-11a | Auto-registro con datos inválidos y sin aceptar privacidad: se marcan los 4 errores a la vez | Excepción | ✅ Aprobado (tras corregir el problema 8) |
 | E-11b | Auto-registro exitoso con botón al portal | Común | ✅ Aprobado |
 | E-12 | Enlace de portal inválido muestra un mensaje claro | Excepción | ✅ Aprobado |
 | E-13 | El portal no se desborda en un celular de 390 px | Común | ✅ Aprobado |
@@ -81,5 +81,6 @@ Se probaron los **casos comunes** (el flujo que se espera) y las **excepciones**
 | 5 | La lista de avisos automáticos del personal era muy larga: una tarjeta por cada destinatario. | Revisión visual de las capturas. | Para el personal se creó la variante compacta `TablaAvisos`, con columna Leído y límite de 15 en la pantalla Comunicación. El asistente conserva las tarjetas. |
 | 6 | La prueba E-06b leía el mensaje de la acción anterior y marcaba un falso error. | Primera ejecución de las pruebas de interfaz. | Se corrigió la prueba: limpia los mensajes antes de cada acción. |
 | 7 | En el portal del asistente, la etiqueta del mes en "Mis eventos" decía "DE" en lugar de "NOV": se tomaba la tercera palabra de la fecha larga, que en español de México es "de". | Revisión visual de las capturas. | El mes se toma de la fecha (AAAA-MM-DD) con una tabla de abreviaturas, como en el resto de la app. |
+| 8 | En el auto-registro, si no se aceptaba el aviso de privacidad solo aparecía ese error y se ocultaban los de nombre, correo y teléfono. La persona tenía que corregir en dos intentos. | Revisión visual de las capturas (collage de componentes). | El microflujo junta todos los errores y los marca a la vez. Se reforzaron la prueba R-02 y el caso E-11a (ahora exige 4 campos marcados). |
 
-**Estado final:** los 7 problemas están corregidos, y las 60 pruebas pasaron en la última ejecución.
+**Estado final:** los 8 problemas están corregidos, y las 60 pruebas pasaron en la última ejecución.
