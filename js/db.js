@@ -33,6 +33,18 @@ export class Database {
 
   // Ejecuta varias operaciones como una sola unidad: o se guardan todas o ninguna.
   transaction(fn) {
+    // Un microflujo puede llamar a otro (p. ej. autoRegistro → inscribir): la transacción
+    // exterior es la única que confirma o revierte.
+    if (this.enTransaccion) return fn();
+    this.enTransaccion = true;
+    try {
+      return this._transaccion(fn);
+    } finally {
+      this.enTransaccion = false;
+    }
+  }
+
+  _transaccion(fn) {
     this.sql.run('BEGIN');
     try {
       const result = fn();
@@ -133,6 +145,56 @@ export async function sembrarDatos(db, hoy = fechaLocal()) {
     db.run('UPDATE inscripciones SET asistio = 1 WHERE evento_id = 5 AND participante_id IN (6,7,8)');
 
     db.run("INSERT INTO bitacora (usuario_id, accion, entidad, detalle) VALUES (1, 'Inicializar', 'sistema', 'Carga de datos de ejemplo')");
+  });
+  return true;
+}
+
+// Datos de ejemplo de la Actividad 4 (tareas, comunicados, mensajes y avisos).
+// Se cargan si la tabla de tareas está vacía y existen los eventos de ejemplo.
+export async function sembrarActividad4(db, hoy = fechaLocal()) {
+  if (db.get('SELECT COUNT(*) AS n FROM tareas').n > 0) return false;
+  if (!db.get("SELECT id FROM eventos WHERE id = 1 AND titulo LIKE 'Kickoff%'")) return false;
+  const d = n => sumarDias(hoy, n);
+  db.transaction(() => {
+    const tareas = [
+      // evento, título, descripción, responsable, prioridad, límite, estado, avance
+      [1, 'Preparar presentación de objetivos 2027', 'Diapositivas con metas por práctica.', 2, 'Alta', d(5), 'En progreso', 60],
+      [1, 'Confirmar catering para 100 personas', 'Cotizar con dos proveedores y confirmar menú.', 3, 'Alta', d(4), 'Pendiente', 0],
+      [1, 'Diseñar gafetes y señalética', '', 7, 'Media', d(6), 'Completada', 100],
+      [1, 'Probar audio y proyector del auditorio', '', null, 'Media', d(6), 'Pendiente', 0],
+      [2, 'Imprimir material del taller', '30 juegos de la guía práctica.', 6, 'Media', d(2), 'En progreso', 40],
+      [2, 'Enviar lectura previa a los participantes', 'Guía Scrum, capítulos 1 a 3.', 1, 'Alta', d(-1), 'Pendiente', 0],
+      [3, 'Preparar reporte de avance del ERP', 'Incluir indicadores del trimestre.', 1, 'Alta', d(1), 'En progreso', 80],
+      [3, 'Confirmar asistentes de Grupo Alfa', '', 4, 'Media', d(0), 'Completada', 100],
+      [4, 'Probar la plataforma de transmisión', 'Ensayo técnico con el ponente.', 2, 'Media', d(10), 'Pendiente', 0],
+    ];
+    for (const t of tareas) {
+      const { lastId } = db.run(`INSERT INTO tareas (evento_id, titulo, descripcion, responsable_id, prioridad, fecha_limite, estado, avance, creado_por, completada_en)
+        VALUES (?,?,?,?,?,?,?,?,2, CASE WHEN ? = 'Completada' THEN datetime('now','localtime') END)`, [...t, t[6]]);
+      if (t[3]) {
+        const ev = db.get('SELECT titulo FROM eventos WHERE id = ?', [t[0]]).titulo;
+        db.run(`INSERT INTO notificaciones (participante_id, evento_id, tarea_id, tipo, titulo, texto, leida) VALUES (?,?,?,?,?,?,?)`,
+          [t[3], t[0], lastId, 'Tarea asignada', `Nueva tarea: ${t[1]}`, `Evento "${ev}" · prioridad ${t[4]} · fecha límite ${t[5]}.`, t[6] === 'Completada' ? 1 : 0]);
+      }
+    }
+    // Confirmaciones de inscripción
+    for (const r of db.all(`SELECT i.participante_id, e.id, e.titulo, e.fecha, e.hora_inicio, e.hora_fin, s.nombre AS sede
+        FROM inscripciones i JOIN eventos e ON e.id = i.evento_id JOIN sedes s ON s.id = e.sede_id WHERE i.estado = 'Confirmado' AND e.fecha >= ?`, [hoy])) {
+      db.run(`INSERT INTO notificaciones (participante_id, evento_id, tipo, titulo, texto, leida) VALUES (?,?,?,?,?,1)`,
+        [r.participante_id, r.id, 'Inscripción', `Tu lugar en "${r.titulo}" está confirmado`, `Te esperamos el ${r.fecha} de ${r.hora_inicio} a ${r.hora_fin} en ${r.sede}.`]);
+    }
+    // Un comunicado del organizador y un mensaje de una asistente
+    const cuerpo = 'Les compartimos la agenda: 9:00 bienvenida, 9:30 resultados 2026, 11:00 metas 2027 por práctica, 12:30 preguntas. Lleguen 15 minutos antes para registrarse.';
+    const { lastId: m } = db.run(`INSERT INTO mensajes (evento_id, direccion, autor_usuario_id, segmento, asunto, cuerpo, destinatarios, leido)
+        VALUES (1, 'Organizador a asistentes', 2, 'Todos', 'Agenda del Kickoff anual', ?, 6, 1)`, [cuerpo]);
+    for (const pid of [1, 2, 3, 6, 7, 8]) {
+      db.run(`INSERT INTO notificaciones (participante_id, evento_id, mensaje_id, tipo, titulo, texto) VALUES (?,?,?,?,?,?)`,
+        [pid, 1, m, 'Comunicado', 'Agenda del Kickoff anual', cuerpo]);
+    }
+    db.run(`INSERT INTO mensajes (evento_id, direccion, autor_participante_id, segmento, asunto, cuerpo, destinatarios, leido)
+        VALUES (2, 'Asistente a organizador', 1, 'Organizador', '¿Hay que llevar laptop?', 'Hola, para el taller de Scrum ¿necesitamos llevar laptop o habrá equipos en la sala? Gracias.', 1, 0)`);
+    db.run(`INSERT INTO accesos_portal (participante_id, token) VALUES (1, ?)`, [randomSalt(12)]);
+    db.run("INSERT INTO bitacora (usuario_id, accion, entidad, detalle) VALUES (1, 'Inicializar', 'sistema', 'Datos de ejemplo de tareas y comunicación')");
   });
   return true;
 }
