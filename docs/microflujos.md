@@ -32,6 +32,8 @@ Los pasos 1, 4 y 5 no se repiten en cada microflujo: son **sub-microflujos reuti
 
 ## Microflujos principales
 
+Versiones en imagen para documentos: [`docs/diagramas/`](diagramas).
+
 ### MF_AsignarTarea — `guardarTarea()`
 
 ```mermaid

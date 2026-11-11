@@ -10,6 +10,12 @@
 | Comunicación | `mensajes`, `notificaciones` | Un comunicado genera una notificación por destinatario; el asistente también escribe al organizador |
 | Portal | `accesos_portal` | Cada asistente tiene un enlace personal (token) |
 
+### Vista simplificada (entidades principales)
+
+![ERD simplificado](../docs/diagramas/ERD-principal.png)
+
+### Modelo completo
+
 Motor: **SQLite** (ejecutado en el navegador con sql.js/WebAssembly). Esquema completo en [`schema.sql`](schema.sql).
 
 ```mermaid

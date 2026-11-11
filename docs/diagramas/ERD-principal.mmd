@@ -1,0 +1,52 @@
+erDiagram
+    EVENTO ||--o{ INSCRIPCION : "tiene asistentes"
+    PARTICIPANTE ||--o{ INSCRIPCION : "se inscribe"
+    EVENTO ||--o{ TAREA : "contiene"
+    PARTICIPANTE |o--o{ TAREA : "es responsable de"
+    EVENTO }o--|| SEDE : "se realiza en"
+    PARTICIPANTE ||--o{ NOTIFICACION : "recibe"
+    EVENTO {
+        int id PK
+        text titulo
+        text fecha
+        text hora_inicio
+        text hora_fin
+        int capacidad
+        real presupuesto
+        text estado
+    }
+    PARTICIPANTE {
+        int id PK
+        text nombre
+        text email UK
+        text empresa
+    }
+    INSCRIPCION {
+        int id PK
+        int evento_id FK
+        int participante_id FK
+        text estado "Confirmado, Lista de espera, Cancelado"
+        int asistio
+    }
+    TAREA {
+        int id PK
+        int evento_id FK
+        int responsable_id FK
+        text titulo
+        text prioridad
+        text estado
+        int avance "0 a 100"
+        text fecha_limite
+    }
+    SEDE {
+        int id PK
+        text nombre UK
+        int capacidad
+    }
+    NOTIFICACION {
+        int id PK
+        int participante_id FK
+        text tipo
+        text titulo
+        int leida
+    }
