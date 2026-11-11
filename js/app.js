@@ -1086,7 +1086,7 @@ function pantallaPortal(token) {
     } else if (pestana === 'eventos') {
       panel.innerHTML = `<div class="dos-columnas"><section class="panel"><h2>Mis eventos</h2>
           ${eventos.length ? `<ul class="lista-eventos">${eventos.map(e => `<li><div class="tarjeta-evento">
-            <div class="fecha-chip"><span>${esc(fechaLarga(e.fecha).split(' ').slice(2, 3).join(' ').toUpperCase())}</span><b>${Number(e.fecha.slice(8))}</b></div>
+            <div class="fecha-chip"><span>${['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'][Number(e.fecha.slice(5, 7)) - 1]}</span><b>${Number(e.fecha.slice(8))}</b></div>
             <div class="tarjeta-cuerpo"><p class="tarjeta-titulo">${esc(e.titulo)}</p><p class="tenue">${esc(e.hora_inicio)}–${esc(e.hora_fin)} · ${esc(e.sede)}</p></div>
             <div>${Insignia(e.estado === 'Cancelado' ? 'Cancelado' : e.mi_estado)}</div></div></li>`).join('')}</ul>` : EstadoVacio('No estás inscrito a ningún evento')}
         </section><section class="panel"><h2>Calendario</h2><div id="cal-portal"></div></section></div>`;

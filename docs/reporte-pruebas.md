@@ -80,5 +80,6 @@ Se probaron los **casos comunes** (el flujo que se espera) y las **excepciones**
 | 4 | En el calendario los títulos de los eventos se cortaban a pocas letras ("09:00 Ca…"). | Revisión visual de las capturas. | Los títulos ahora ocupan hasta 2 líneas. |
 | 5 | La lista de avisos automáticos del personal era muy larga: una tarjeta por cada destinatario. | Revisión visual de las capturas. | Para el personal se creó la variante compacta `TablaAvisos`, con columna Leído y límite de 15 en la pantalla Comunicación. El asistente conserva las tarjetas. |
 | 6 | La prueba E-06b leía el mensaje de la acción anterior y marcaba un falso error. | Primera ejecución de las pruebas de interfaz. | Se corrigió la prueba: limpia los mensajes antes de cada acción. |
+| 7 | En el portal del asistente, la etiqueta del mes en "Mis eventos" decía "DE" en lugar de "NOV": se tomaba la tercera palabra de la fecha larga, que en español de México es "de". | Revisión visual de las capturas. | El mes se toma de la fecha (AAAA-MM-DD) con una tabla de abreviaturas, como en el resto de la app. |
 
-**Estado final:** todos los problemas están corregidos, y las 60 pruebas pasaron en la última ejecución.
+**Estado final:** los 7 problemas están corregidos, y las 60 pruebas pasaron en la última ejecución.
