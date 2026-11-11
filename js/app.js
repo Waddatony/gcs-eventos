@@ -1,15 +1,18 @@
 // GCS Eventos — aplicación principal: arranque, sesión, enrutador y pantallas.
 
-import { crearBaseDeDatos, sembrarDatos, fechaLocal, USUARIOS_DEMO } from './db.js';
+import { crearBaseDeDatos, sembrarDatos, sembrarActividad4, fechaLocal, USUARIOS_DEMO } from './db.js';
 import { cargarBytes, guardarBytes, borrarBytes } from './storage.js';
 import * as R from './rules.js';
+import * as M from './microflujos.js';
 import {
   esc, Icono, Boton, Campo, Formulario, leerFormulario, mostrarErrores, Tabla, TarjetaKPI, Insignia,
   BarraProgreso, EncabezadoPagina, Menu, toast, abrirModal, cerrarModal, confirmar, dinero, fechaLarga, EstadoVacio,
+  Pestanas, FormularioAsistente, montarCalendario, rangoMes, ListaTareas, ResumenProgreso, ListaAvisos, ListaMensajes, TablaAvisos,
 } from './components.js';
 
 let db = null;
 let usuario = null;
+let parametros = new URLSearchParams();
 const app = document.getElementById('app');
 const hoy = () => fechaLocal();
 
@@ -20,7 +23,8 @@ async function iniciar() {
     const schema = await fetch('database/schema.sql').then(r => { if (!r.ok) throw new Error('No se pudo cargar el esquema'); return r.text(); });
     const guardado = await cargarBytes().catch(() => null);
     db = crearBaseDeDatos(SQL, schema, guardado);
-    if (await sembrarDatos(db)) await persistir();
+    const nuevos = await sembrarDatos(db);
+    if (await sembrarActividad4(db) || nuevos) await persistir();
     restaurarSesion();
     window.addEventListener('hashchange', render);
     render();
@@ -71,8 +75,16 @@ function cerrarSesion() {
 }
 
 // ================================================================ Enrutador
+// Rutas públicas: no requieren iniciar sesión (las usa el asistente)
+const RUTAS_PUBLICAS = [
+  { patron: /^#\/portal\/([0-9a-f]+)$/, pantalla: m => pantallaPortal(m[1]) },
+  { patron: /^#\/registro\/(\d+)$/, pantalla: m => pantallaRegistro(Number(m[1])) },
+];
+
 const RUTAS = [
   { patron: /^#\/inicio$/, pantalla: pantallaInicio, menu: 'inicio' },
+  { patron: /^#\/tareas$/, pantalla: pantallaTareas, menu: 'tareas' },
+  { patron: /^#\/comunicacion$/, pantalla: pantallaComunicacion, menu: 'comunicacion', permiso: 'mensajes.ver' },
   { patron: /^#\/eventos$/, pantalla: pantallaEventos, menu: 'eventos' },
   { patron: /^#\/eventos\/nuevo$/, pantalla: () => pantallaFormEvento(null), menu: 'eventos', permiso: 'evento.crear' },
   { patron: /^#\/eventos\/(\d+)$/, pantalla: m => pantallaDetalleEvento(Number(m[1])), menu: 'eventos' },
@@ -85,7 +97,10 @@ const RUTAS = [
 
 function render() {
   cerrarModal();
-  const hash = location.hash || '#/inicio';
+  const [hash, query] = (location.hash || '#/inicio').split('?');
+  parametros = new URLSearchParams(query || '');
+  const publica = RUTAS_PUBLICAS.find(r => r.patron.test(hash));
+  if (publica) { publica.pantalla(hash.match(publica.patron)); window.scrollTo(0, 0); return; }
   if (!usuario) { if (hash !== '#/login') location.hash = '#/login'; pantallaLogin(); return; }
   if (hash === '#/login') { location.hash = '#/inicio'; return; }
   const ruta = RUTAS.find(r => r.patron.test(hash));
@@ -104,8 +119,13 @@ function pintarLayout(activo) {
   const items = [
     { clave: 'inicio', texto: 'Inicio', icono: 'inicio', href: '#/inicio' },
     { clave: 'eventos', texto: 'Eventos', icono: 'eventos', href: '#/eventos' },
+    { clave: 'tareas', texto: 'Tareas', icono: 'tarea', href: '#/tareas' },
     { clave: 'participantes', texto: 'Participantes', icono: 'personas', href: '#/participantes' },
   ];
+  if (R.puede(usuario, 'mensajes.ver')) {
+    const sinLeer = db.get("SELECT COUNT(*) AS n FROM mensajes WHERE direccion = 'Asistente a organizador' AND leido = 0").n;
+    items.push({ clave: 'comunicacion', texto: sinLeer ? `Comunicación (${sinLeer})` : 'Comunicación', icono: 'mensaje', href: '#/comunicacion' });
+  }
   if (R.puede(usuario, 'sede.gestionar')) items.push({ clave: 'sedes', texto: 'Sedes', icono: 'sede', href: '#/sedes' });
   if (R.puede(usuario, 'usuario.gestionar')) items.push({ clave: 'usuarios', texto: 'Usuarios', icono: 'usuario', href: '#/usuarios' });
   if (R.puede(usuario, 'bitacora.ver')) items.push({ clave: 'bitacora', texto: 'Bitácora', icono: 'bitacora', href: '#/bitacora' });
@@ -160,11 +180,18 @@ function pantallaLogin() {
         <summary>Usuarios de prueba</summary>
         <ul>${USUARIOS_DEMO.map(u => `<li><button type="button" class="enlace" data-email="${esc(u.email)}" data-pw="${esc(u.password)}">
           <b>${esc(u.rol)}</b> · ${esc(u.email)} · <code>${esc(u.password)}</code></button></li>`).join('')}</ul>
+        ${(() => {
+          const ana = db.get('SELECT a.token, p.nombre FROM accesos_portal a JOIN participantes p ON p.id = a.participante_id ORDER BY a.participante_id LIMIT 1');
+          const ev = db.get(`SELECT id, titulo FROM eventos WHERE estado <> 'Cancelado' AND fecha >= ? ORDER BY fecha DESC LIMIT 1`, [hoy()]);
+          return `<p class="chico">Sin iniciar sesión (vista del asistente):</p><ul>
+            ${ana ? `<li><a href="#/portal/${esc(ana.token)}">Portal del asistente de ${esc(ana.nombre)}</a></li>` : ''}
+            ${ev ? `<li><a href="#/registro/${ev.id}">Auto-registro a "${esc(ev.titulo)}"</a></li>` : ''}</ul>`;
+        })()}
       </details>
     </section>
     <section class="login-arte" aria-hidden="true">
       <div><p class="login-frase">Planea, inscribe y mide cada evento en un solo lugar.</p>
-      <ul class="login-puntos"><li>${Icono('eventos')} Agenda sin choques de sede</li><li>${Icono('personas')} Cupos y lista de espera automáticos</li><li>${Icono('check')} Check-in y tasa de asistencia</li></ul></div>
+      <ul class="login-puntos"><li>${Icono('eventos')} Agenda sin choques de sede</li><li>${Icono('personas')} Cupos y lista de espera automáticos</li><li>${Icono('tarea')} Tareas asignadas y su avance</li><li>${Icono('mensaje')} Avisos y comunicados a los asistentes</li></ul></div>
     </section>
   </main>`;
 
@@ -192,6 +219,7 @@ function pantallaInicio() {
   const actividad = db.all(`SELECT b.*, u.nombre AS usuario FROM bitacora b LEFT JOIN usuarios u ON u.id = b.usuario_id
       WHERE b.accion NOT IN ('Inicio de sesión','Cierre de sesión') ORDER BY b.id DESC LIMIT 6`);
   const llenos = proximos.filter(e => R.metricasEvento(e, hoy()).ocupacion >= 80);
+  const rt = M.resumenTareas(M.listarTareas(db, {}, hoy()));
 
   contenido().innerHTML = `
     ${EncabezadoPagina({ titulo: `Hola, ${usuario.nombre.split(' ')[0]}`, subtitulo: fechaLarga(hoy()),
@@ -203,16 +231,40 @@ function pantallaInicio() {
       ${TarjetaKPI({ titulo: 'Tasa de asistencia', valor: `${k.asistencia}%`, detalle: 'eventos ya realizados', icono: 'check', tono: 'morado' })}
     </section>
     ${llenos.length ? `<div class="aviso" role="status">${Icono('personas')} <span><b>${llenos.length}</b> evento(s) próximos están al 80% o más de su capacidad.</span></div>` : ''}
+    ${rt.vencidas ? `<div class="aviso aviso-rojo" role="status">${Icono('tarea')} <span><b>${rt.vencidas}</b> tarea(s) vencida(s) sin completar. <a href="#/tareas?vencidas=1">Ver tareas vencidas</a></span></div>` : ''}
     <div class="dos-columnas">
       <section class="panel"><h2>Próximos eventos</h2>
         ${proximos.length ? `<ul class="lista-eventos">${proximos.map(TarjetaEvento).join('')}</ul>` : EstadoVacio('No hay eventos próximos')}
         <p>${Boton({ texto: 'Ver todos los eventos', variante: 'secundario', href: '#/eventos' })}</p>
       </section>
-      <section class="panel"><h2>Actividad reciente</h2>
-        <ul class="actividad">${actividad.map(a => `<li><span class="punto"></span><div><p><b>${esc(a.usuario || 'Sistema')}</b> · ${esc(a.accion)} ${esc(a.entidad)}</p>
-          <p class="tenue">${esc(a.detalle)} · ${esc(a.fecha)}</p></div></li>`).join('') || '<li>Sin actividad</li>'}</ul>
-      </section>
+      <div>
+        <section class="panel"><h2>Calendario</h2><div id="cal-inicio"></div>
+          <p class="tenue chico">Elige un día para ver sus eventos en la agenda.</p></section>
+        <section class="panel"><div class="panel-encabezado"><h2>Avance de tareas</h2>${Boton({ texto: 'Ver tareas', variante: 'secundario', href: '#/tareas' })}</div>
+          ${ResumenProgreso(rt)}</section>
+        <section class="panel"><h2>Actividad reciente</h2>
+          <ul class="actividad">${actividad.map(a => `<li><span class="punto"></span><div><p><b>${esc(a.usuario || 'Sistema')}</b> · ${esc(a.accion)} ${esc(a.entidad)}</p>
+            <p class="tenue">${esc(a.detalle)} · ${esc(a.fecha)}</p></div></li>`).join('') || '<li>Sin actividad</li>'}</ul>
+        </section>
+      </div>
     </div>`;
+  montarCalendario(document.getElementById('cal-inicio'), {
+    hoy: hoy(), compacto: true, cargarEventos: eventosDelMes(),
+    alElegirDia: f => { location.hash = `#/eventos?vista=calendario&fecha=${f}`; },
+  });
+}
+
+// Consulta reutilizable para alimentar el componente Calendario
+function eventosDelMes({ sedeId = null, participanteId = null } = {}) {
+  return (anio, mes) => {
+    const [ini, fin] = rangoMes(anio, mes);
+    if (participanteId) {
+      return db.all(`SELECT e.id, e.titulo, e.fecha, e.hora_inicio, e.estado FROM eventos e JOIN inscripciones i ON i.evento_id = e.id
+          WHERE i.participante_id = ? AND i.estado <> 'Cancelado' AND e.fecha BETWEEN ? AND ? ORDER BY e.hora_inicio`, [participanteId, ini, fin]);
+    }
+    return db.all(`SELECT id, titulo, fecha, hora_inicio, estado FROM eventos WHERE fecha BETWEEN ? AND ? ${sedeId ? 'AND sede_id = ?' : ''}
+        ORDER BY hora_inicio`, sedeId ? [ini, fin, sedeId] : [ini, fin]);
+  };
 }
 
 function TarjetaEvento(e) {
@@ -231,10 +283,17 @@ function TarjetaEvento(e) {
 function pantallaEventos() {
   const filtros = JSON.parse(sessionStorage.getItem('gcs.filtros') || '{}');
   const sedes = db.all('SELECT id, nombre FROM sedes ORDER BY nombre');
+  const vista = parametros.get('vista') || sessionStorage.getItem('gcs.vista') || 'lista';
+  sessionStorage.setItem('gcs.vista', vista);
+  const fechaInicial = parametros.get('fecha') || hoy();
 
   contenido().innerHTML = `
     ${EncabezadoPagina({ titulo: 'Eventos', subtitulo: 'Agenda de eventos corporativos y con clientes',
-      acciones: `${Boton({ texto: 'Exportar CSV', variante: 'secundario', icono: 'descargar', accion: 'exportar' })}
+      acciones: `<div class="segmentado" role="group" aria-label="Vista">
+                   <a class="btn ${vista === 'lista' ? 'btn-primario' : 'btn-secundario'}" href="#/eventos?vista=lista" ${vista === 'lista' ? 'aria-current="page"' : ''}>${Icono('lista')}<span>Lista</span></a>
+                   <a class="btn ${vista === 'calendario' ? 'btn-primario' : 'btn-secundario'}" href="#/eventos?vista=calendario" ${vista === 'calendario' ? 'aria-current="page"' : ''}>${Icono('calendario')}<span>Calendario</span></a>
+                 </div>
+                 ${Boton({ texto: 'Exportar CSV', variante: 'secundario', icono: 'descargar', accion: 'exportar' })}
                  ${R.puede(usuario, 'evento.crear') ? Boton({ texto: 'Nuevo evento', icono: 'mas', href: '#/eventos/nuevo' }) : ''}` })}
     <form class="filtros panel" id="filtros" role="search">
       <div class="campo campo-buscar"><label for="f-q">Buscar</label>
@@ -261,6 +320,29 @@ function pantallaEventos() {
     if (f.cuando === 'Finalizados') { cond.push("fecha < ? AND estado <> 'Cancelado'"); p.push(hoy()); }
     if (f.cuando === 'Cancelados') cond.push("estado = 'Cancelado'");
     const orden = f.cuando === 'Finalizados' ? 'fecha DESC' : 'fecha, hora_inicio';
+    if (vista === 'calendario') {
+      // En el calendario se ignora el filtro de estado: se ve todo el mes
+      const c2 = cond.filter(c => !/estado|fecha/.test(c));
+      const p2 = p.slice(0, p.length - (f.cuando === 'Próximos' || f.cuando === 'Finalizados' ? 1 : 0));
+      document.getElementById('resultado').innerHTML = `<div class="dos-columnas cal-layout"><div id="cal-eventos"></div>
+        <div><h2 id="dia-titulo">Eventos del día</h2><div id="dia-eventos"></div></div></div>`;
+      const verDia = fecha => {
+        filas = db.all(`SELECT * FROM v_eventos_resumen WHERE fecha = ? ${c2.length ? 'AND ' + c2.join(' AND ') : ''} ORDER BY hora_inicio`, [fecha, ...p2]);
+        document.getElementById('dia-titulo').textContent = `Eventos del ${fechaLarga(fecha)}`;
+        document.getElementById('dia-eventos').innerHTML = (filas.length ? `<ul class="lista-eventos">${filas.map(TarjetaEvento).join('')}</ul>` : EstadoVacio('Sin eventos este día'))
+          + (R.puede(usuario, 'evento.crear') && fecha >= hoy() ? `<p>${Boton({ texto: 'Crear evento este día', icono: 'mas', href: `#/eventos/nuevo?fecha=${fecha}` })}</p>` : '');
+      };
+      montarCalendario(document.getElementById('cal-eventos'), {
+        hoy: hoy(), fechaInicial, seleccionado: fechaInicial, alElegirDia: verDia,
+        cargarEventos: (anio, mes) => {
+          const [ini, fin] = rangoMes(anio, mes);
+          return db.all(`SELECT id, titulo, fecha, hora_inicio, estado FROM v_eventos_resumen WHERE fecha BETWEEN ? AND ?
+            ${c2.length ? 'AND ' + c2.join(' AND ') : ''} ORDER BY hora_inicio`, [ini, fin, ...p2]);
+        },
+      });
+      verDia(fechaInicial);
+      return;
+    }
     filas = db.all(`SELECT * FROM v_eventos_resumen ${cond.length ? 'WHERE ' + cond.join(' AND ') : ''} ORDER BY ${orden}`, p);
 
     document.getElementById('resultado').innerHTML = `<p class="tenue">${filas.length} evento(s)</p>` + Tabla({
@@ -313,7 +395,8 @@ function pantallaFormEvento(id) {
   if (id && !ev) { toast('El evento no existe', 'error'); location.hash = '#/eventos'; return; }
   if (ev && !R.puede(usuario, 'evento.editar', ev)) { toast('Solo puedes editar tus propios eventos', 'error'); location.hash = `#/eventos/${id}`; return; }
   const sedes = db.all('SELECT * FROM sedes ORDER BY nombre');
-  const v = ev || { fecha: hoy(), hora_inicio: '09:00', hora_fin: '10:00', presupuesto: 0, estado: 'Planeado' };
+  const fechaParam = parametros.get('fecha');
+  const v = ev || { fecha: fechaParam && fechaParam >= hoy() ? fechaParam : hoy(), hora_inicio: '09:00', hora_fin: '10:00', presupuesto: 0, estado: 'Planeado' };
   const volver = id ? `#/eventos/${id}` : '#/eventos';
 
   contenido().innerHTML = `
@@ -334,7 +417,11 @@ function pantallaFormEvento(id) {
           Campo({ nombre: 'descripcion', etiqueta: 'Descripción', tipo: 'textarea', valor: v.descripcion }),
         ] })}
       </section>
-      <aside class="panel resumen-vivo" aria-live="polite">
+      <aside>
+      <section class="panel"><h2>Disponibilidad de la sede</h2>
+        <p class="tenue chico" id="cal-sede-ayuda">Elige una sede para ver qué días ya está ocupada. Haz clic en un día para usarlo como fecha.</p>
+        <div id="cal-form"></div></section>
+      <section class="panel resumen-vivo" aria-live="polite">
         <h2>Cálculo automático</h2>
         <div id="calculo"></div>
         <h3>Reglas que se validan</h3>
@@ -343,6 +430,7 @@ function pantallaFormEvento(id) {
           <li>La capacidad no puede superar la de la sede.</li><li>La sede no puede tener otro evento en el mismo horario.</li>
           ${id ? '<li>La capacidad no puede ser menor a los confirmados.</li>' : ''}
         </ul>
+      </section>
       </aside>
     </div>`;
 
@@ -371,8 +459,23 @@ function pantallaFormEvento(id) {
       c.querySelector('.error-campo').textContent = msg;
     });
   };
+  // Componente Calendario reutilizado: muestra solo los eventos de la sede elegida
+  let sedeCal = Number(form.sede_id.value) || null;
+  const cal = montarCalendario(document.getElementById('cal-form'), {
+    hoy: hoy(), fechaInicial: form.fecha.value || hoy(), seleccionado: form.fecha.value, compacto: true,
+    cargarEventos: (a, m) => sedeCal ? eventosDelMes({ sedeId: sedeCal })(a, m).filter(e => e.id !== id && e.estado !== 'Cancelado') : [],
+    alElegirDia: f => {
+      if (f < hoy() && !id) { toast('No puedes programar un evento en una fecha pasada', 'error'); return; }
+      form.fecha.value = f; form.fecha.dataset.tocado = '1'; calc();
+    },
+  });
   form.addEventListener('input', e => { e.target.dataset.tocado = '1'; calc(); });
-  form.addEventListener('change', e => { e.target.dataset.tocado = '1'; calc(); });
+  form.addEventListener('change', e => {
+    e.target.dataset.tocado = '1';
+    if (e.target.name === 'sede_id') { sedeCal = Number(e.target.value) || null; cal.refrescar(); }
+    if (e.target.name === 'fecha' && e.target.value) cal.irA(e.target.value);
+    calc();
+  });
   calc();
 
   form.onsubmit = async e => {
@@ -390,48 +493,89 @@ function pantallaDetalleEvento(id) {
   const e = db.get('SELECT * FROM v_eventos_resumen WHERE id = ?', [id]);
   if (!e) { toast('El evento no existe', 'error'); location.hash = '#/eventos'; return; }
   const m = R.metricasEvento(e, hoy());
+  const abierto = e.estado !== 'Cancelado' && e.fecha >= hoy();
+  const puedeEditar = R.puede(usuario, 'evento.editar', e);
+  const tareas = M.listarTareas(db, { eventoId: id }, hoy());
+  const rt = M.resumenTareas(tareas);
+  const sinLeer = db.get("SELECT COUNT(*) AS n FROM mensajes WHERE evento_id = ? AND direccion = 'Asistente a organizador' AND leido = 0", [id]).n;
+  const activos = db.get("SELECT COUNT(*) AS n FROM inscripciones WHERE evento_id = ? AND estado <> 'Cancelado'", [id]).n;
+  let pestana = parametros.get('tab') || 'asistentes';
+
+  contenido().innerHTML = `
+    ${EncabezadoPagina({ titulo: e.titulo, subtitulo: `${e.tipo} · Organiza ${e.organizador}`, acciones: `
+      ${Boton({ texto: 'Volver', variante: 'secundario', icono: 'volver', href: '#/eventos' })}
+      ${abierto ? Boton({ texto: 'Enlace de registro', variante: 'secundario', icono: 'enlace', accion: 'enlace-registro' }) : ''}
+      ${puedeEditar && e.estado !== 'Cancelado' ? Boton({ texto: 'Cancelar evento', variante: 'secundario', icono: 'cancelar', accion: 'cancelar-evento' }) : ''}
+      ${puedeEditar ? Boton({ texto: 'Editar', icono: 'editar', href: `#/eventos/${id}/editar` }) : ''}` })}
+    <p class="insignias">${Insignia(m.temporal)} ${e.estado !== 'Cancelado' ? Insignia(e.estado) : ''} ${m.lleno && e.estado !== 'Cancelado' ? Insignia('Lleno') : ''}
+      <span class="tenue">${esc(fechaLarga(e.fecha))} · ${esc(e.hora_inicio)}–${esc(e.hora_fin)} · ${esc(e.sede)}</span></p>
+    <section class="kpis" aria-label="Métricas del evento">
+      ${TarjetaKPI({ titulo: 'Lugares disponibles', valor: m.disponibles, detalle: `de ${e.capacidad} · ${e.en_espera} en espera`, icono: 'personas', tono: m.lleno ? 'rojo' : 'verde' })}
+      ${TarjetaKPI({ titulo: 'Costo por asistente', valor: dinero(m.costoPorPersona), detalle: `Presupuesto ${dinero(e.presupuesto)}`, icono: 'dinero', tono: 'amarillo' })}
+      ${TarjetaKPI({ titulo: 'Avance de tareas', valor: `${rt.avance}%`, detalle: `${rt.completadas} de ${rt.total} completadas`, icono: 'tarea', tono: rt.vencidas ? 'rojo' : 'morado' })}
+      ${TarjetaKPI({ titulo: 'Asistencia', valor: `${m.tasaAsistencia}%`, detalle: `${e.asistentes} con check-in`, icono: 'check', tono: 'azul' })}
+    </section>
+    <div id="zona-pestanas"></div>`;
+
+  const pintarPestanas = () => {
+    document.getElementById('zona-pestanas').innerHTML = Pestanas('evento', [
+      { clave: 'asistentes', texto: 'Asistentes', icono: 'personas', contador: activos },
+      { clave: 'tareas', texto: 'Tareas', icono: 'tarea', contador: rt.vencidas ? `${rt.total} · ${rt.vencidas} vencida(s)` : rt.total },
+      { clave: 'comunicacion', texto: 'Comunicación', icono: 'mensaje', contador: sinLeer ? `${sinLeer} nuevo(s)` : '' },
+    ], pestana);
+    const panel = document.getElementById('panel-evento');
+    ({ asistentes: pestanaAsistentes, tareas: pestanaTareas, comunicacion: pestanaComunicacion })[pestana](panel, e, { abierto, puedeEditar, recargar });
+  };
+  const recargar = () => { parametros.set('tab', pestana); pantallaDetalleEvento(id); };
+
+  pintarPestanas();
+  alClic({
+    tab: ({ tab }) => {
+      pestana = tab;
+      history.replaceState(null, '', `#/eventos/${id}?tab=${tab}`);
+      pintarPestanas();
+      document.getElementById(`tab-evento-${tab}`)?.focus();
+    },
+    'cancelar-evento': async () => {
+      if (!(await confirmar(`¿Cancelar "${e.titulo}"? Se liberará la sede y se avisará a sus ${activos} inscrito(s).`, { textoAceptar: 'Cancelar evento' }))) return;
+      const r = await ejecutar(() => R.cancelarEvento(db, usuario, id), n => `Evento cancelado. Se avisó a ${n} asistente(s).`);
+      if (r.ok) recargar();
+    },
+    'enlace-registro': () => modalEnlace('Enlace de auto-registro', `Comparte este enlace para que los asistentes se registren solos a "${e.titulo}". Se usa el mismo formulario de registro de asistentes del sistema.`, `#/registro/${id}`),
+  });
+}
+
+// ---------------------------------------------------------------- Pestaña: Asistentes
+function pestanaAsistentes(panel, e, { abierto, recargar }) {
+  const id = e.id;
+  const m = R.metricasEvento(e, hoy());
   const inscripciones = db.all(`SELECT i.*, p.nombre, p.email, p.empresa FROM inscripciones i
       JOIN participantes p ON p.id = i.participante_id WHERE i.evento_id = ?
       ORDER BY CASE i.estado WHEN 'Confirmado' THEN 0 WHEN 'Lista de espera' THEN 1 ELSE 2 END, i.fecha_registro, i.id`, [id]);
   const disponibles = db.all(`SELECT id, nombre, empresa FROM participantes WHERE id NOT IN
       (SELECT participante_id FROM inscripciones WHERE evento_id = ? AND estado <> 'Cancelado') ORDER BY nombre`, [id]);
-  const abierto = e.estado !== 'Cancelado' && e.fecha >= hoy();
   const puedeAsistencia = e.estado !== 'Cancelado' && e.fecha <= hoy();
-  const puedeEditar = R.puede(usuario, 'evento.editar', e);
   let posEspera = 0;
 
-  contenido().innerHTML = `
-    ${EncabezadoPagina({ titulo: e.titulo, subtitulo: `${e.tipo} · Organiza ${e.organizador}`, acciones: `
-      ${Boton({ texto: 'Volver', variante: 'secundario', icono: 'volver', href: '#/eventos' })}
-      ${puedeEditar && e.estado !== 'Cancelado' ? Boton({ texto: 'Cancelar evento', variante: 'secundario', icono: 'cancelar', accion: 'cancelar-evento' }) : ''}
-      ${puedeEditar ? Boton({ texto: 'Editar', icono: 'editar', href: `#/eventos/${id}/editar` }) : ''}` })}
-    <p class="insignias">${Insignia(m.temporal)} ${e.estado !== 'Cancelado' ? Insignia(e.estado) : ''} ${m.lleno && e.estado !== 'Cancelado' ? Insignia('Lleno') : ''}</p>
-    <section class="kpis" aria-label="Métricas del evento">
-      ${TarjetaKPI({ titulo: 'Lugares disponibles', valor: m.disponibles, detalle: `de ${e.capacidad}`, icono: 'personas', tono: m.lleno ? 'rojo' : 'verde' })}
-      ${TarjetaKPI({ titulo: 'Ocupación', valor: `${m.ocupacion}%`, detalle: `${e.en_espera} en lista de espera`, icono: 'eventos', tono: 'azul' })}
-      ${TarjetaKPI({ titulo: 'Costo por asistente', valor: dinero(m.costoPorPersona), detalle: `Presupuesto ${dinero(e.presupuesto)}`, icono: 'dinero', tono: 'amarillo' })}
-      ${TarjetaKPI({ titulo: 'Asistencia', valor: `${m.tasaAsistencia}%`, detalle: `${e.asistentes} con check-in`, icono: 'check', tono: 'morado' })}
-    </section>
+  panel.innerHTML = `
     <div class="dos-columnas detalle">
       <section class="panel">
         <h2>Detalles</h2>
         <dl class="datos">
-          <div><dt>Fecha</dt><dd>${esc(fechaLarga(e.fecha))}</dd></div>
-          <div><dt>Horario</dt><dd>${esc(e.hora_inicio)} – ${esc(e.hora_fin)}</dd></div>
-          <div><dt>Sede</dt><dd>${esc(e.sede)}</dd></div>
           <div><dt>Descripción</dt><dd>${esc(e.descripcion) || '—'}</dd></div>
+          <div><dt>Ocupación</dt><dd>${m.confirmados} de ${e.capacidad} (${m.ocupacion}%)</dd></div>
         </dl>
         ${BarraProgreso(m.ocupacion)}
       </section>
       <section class="panel">
-        <h2>Inscribir participante</h2>
+        <h2>Inscribir asistente</h2>
         ${abierto ? `<form id="form-inscribir" class="inscribir">
             <div class="campo"><label for="sel-part">Participante</label>
               <select id="sel-part" name="participante" required><option value="">Selecciona…</option>
               ${disponibles.map(p => `<option value="${p.id}">${esc(p.nombre)} — ${esc(p.empresa)}</option>`).join('')}</select></div>
             ${Boton({ texto: m.lleno ? 'Agregar a lista de espera' : 'Inscribir', tipo: 'submit', icono: 'mas' })}
           </form>
-          <p>${Boton({ texto: 'Registrar participante nuevo', variante: 'enlace', accion: 'nuevo-participante' })}</p>
+          <p>${Boton({ texto: 'Registrar asistente nuevo', variante: 'enlace', accion: 'nuevo-participante' })}</p>
           ${m.lleno ? '<p class="aviso chico">El evento está lleno: las nuevas inscripciones pasan a lista de espera y se confirman automáticamente si alguien cancela.</p>' : ''}`
         : `<p class="tenue">${e.estado === 'Cancelado' ? 'El evento está cancelado.' : 'El evento ya se realizó; no admite inscripciones.'}</p>`}
       </section>
@@ -442,76 +586,213 @@ function pantallaDetalleEvento(id) {
       ${!puedeAsistencia && e.estado !== 'Cancelado' ? '<p class="tenue chico">El check-in de asistencia se habilita el día del evento.</p>' : ''}
       ${Tabla({ vacio: 'Aún no hay inscritos', filas: inscripciones, claseFila: i => i.estado === 'Cancelado' ? 'fila-tenue' : '',
         columnas: [
-          { titulo: 'Participante', render: i => `<b>${esc(i.nombre)}</b><br><span class="tenue">${esc(i.email)}</span>` },
+          { titulo: 'Asistente', render: i => `<b>${esc(i.nombre)}</b><br><span class="tenue">${esc(i.email)}</span>` },
           { titulo: 'Empresa', campo: 'empresa' },
           { titulo: 'Estado', render: i => Insignia(i.estado) + (i.estado === 'Lista de espera' ? ` <span class="tenue chico">#${++posEspera}</span>` : '') },
           { titulo: 'Asistencia', render: i => i.estado !== 'Confirmado' ? '—' : puedeAsistencia
               ? `<label class="interruptor"><input type="checkbox" data-asistencia="${i.id}" ${i.asistio ? 'checked' : ''}><span>${i.asistio ? 'Asistió' : 'Pendiente'}</span></label>`
               : '<span class="tenue">Pendiente</span>' },
-          { titulo: 'Acciones', clase: 'acciones', render: i => abierto && i.estado !== 'Cancelado'
-              ? Boton({ texto: 'Cancelar inscripción', variante: 'fantasma-peligro', icono: 'cancelar', soloIcono: true, accion: 'cancelar-insc', datos: { id: i.id } }) : '' },
+          { titulo: 'Acciones', clase: 'acciones', render: i => `
+              ${i.estado !== 'Cancelado' ? Boton({ texto: 'Enlace del portal', variante: 'fantasma', icono: 'enlace', soloIcono: true, accion: 'portal', datos: { pid: i.participante_id } }) : ''}
+              ${abierto && i.estado !== 'Cancelado' ? Boton({ texto: 'Cancelar inscripción', variante: 'fantasma-peligro', icono: 'cancelar', soloIcono: true, accion: 'cancelar-insc', datos: { id: i.id } }) : ''}` },
         ] })}
     </section>`;
 
-  const recargar = () => pantallaDetalleEvento(id);
-
-  document.getElementById('form-inscribir')?.addEventListener('submit', async ev => {
+  panel.querySelector('#form-inscribir')?.addEventListener('submit', async ev => {
     ev.preventDefault();
     const pid = Number(ev.target.participante.value);
     if (!pid) { toast('Selecciona un participante', 'error'); return; }
     const r = await ejecutar(() => R.inscribir(db, usuario, id, pid, hoy()),
-      estado => estado === 'Confirmado' ? 'Inscripción confirmada' : 'Evento lleno: se agregó a la lista de espera');
+      estado => estado === 'Confirmado' ? 'Inscripción confirmada. Se le envió un aviso.' : 'Evento lleno: se agregó a la lista de espera');
     if (r.ok) recargar();
   });
-
-  contenido().onchange = async ev => {
+  panel.onchange = async ev => {
     const chk = ev.target.closest('[data-asistencia]');
     if (!chk) return;
     const r = await ejecutar(() => R.registrarAsistencia(db, usuario, Number(chk.dataset.asistencia), chk.checked, hoy()),
       chk.checked ? 'Check-in registrado' : 'Check-in retirado');
     if (r.ok) recargar(); else chk.checked = !chk.checked;
   };
-
-  alClic({
-    'cancelar-insc': async ({ id: iid }) => {
-      if (!(await confirmar('¿Cancelar esta inscripción? Si hay lista de espera, el siguiente se confirmará automáticamente.', { textoAceptar: 'Cancelar inscripción' }))) return;
-      const r = await ejecutar(() => R.cancelarInscripcion(db, usuario, Number(iid), hoy()),
+  panel.onclick = async ev => {
+    const b = ev.target.closest('[data-accion]');
+    if (!b) return;
+    const d = b.dataset;
+    if (d.accion === 'cancelar-insc') {
+      if (!(await confirmar('¿Cancelar esta inscripción? Si hay lista de espera, el siguiente se confirmará automáticamente y sus tareas pendientes quedarán sin asignar.', { textoAceptar: 'Cancelar inscripción' }))) return;
+      const r = await ejecutar(() => R.cancelarInscripcion(db, usuario, Number(d.id), hoy()),
         prom => prom.length ? `Inscripción cancelada. ${prom.join(', ')} pasó a confirmado.` : 'Inscripción cancelada');
       if (r.ok) recargar();
-    },
-    'cancelar-evento': async () => {
-      if (!(await confirmar(`¿Cancelar "${e.titulo}"? Se liberará la sede y ya no aceptará inscripciones.`, { textoAceptar: 'Cancelar evento' }))) return;
-      const r = await ejecutar(() => R.cancelarEvento(db, usuario, id), 'Evento cancelado');
+    } else if (d.accion === 'nuevo-participante') {
+      modalParticipante(null, async nuevoId => {
+        const r = await ejecutar(() => R.inscribir(db, usuario, id, nuevoId, hoy()), estado => `Asistente registrado e inscrito (${estado})`);
+        recargar();
+        return r;
+      });
+    } else if (d.accion === 'portal') {
+      modalPortal(Number(d.pid));
+    } else if (d.accion === 'exportar') {
+      descargarCSV(`inscritos-evento-${id}.csv`, inscripciones.map(i => ({ ...i, asistio: i.asistio ? 'Sí' : 'No' })), [
+        { campo: 'nombre', titulo: 'Nombre' }, { campo: 'email', titulo: 'Correo' }, { campo: 'empresa', titulo: 'Empresa' },
+        { campo: 'estado', titulo: 'Estado' }, { campo: 'asistio', titulo: 'Asistió' }, { campo: 'fecha_registro', titulo: 'Registro' },
+      ]);
+    }
+  };
+}
+
+// ---------------------------------------------------------------- Pestaña: Tareas
+function pestanaTareas(panel, e, { abierto, puedeEditar, recargar }) {
+  const tareas = M.listarTareas(db, { eventoId: e.id }, hoy());
+  const gestiona = abierto && puedeEditar && R.puede(usuario, 'tarea.gestionar');
+  panel.innerHTML = `
+    <section class="panel">
+      <div class="panel-encabezado"><h2>Seguimiento de tareas</h2>
+        ${gestiona ? Boton({ texto: 'Nueva tarea', icono: 'mas', accion: 'nueva-tarea' }) : ''}</div>
+      ${ResumenProgreso(M.resumenTareas(tareas))}
+      ${!abierto ? '<p class="tenue chico">El evento ya no está activo: las tareas quedan como historial.</p>' : ''}
+    </section>
+    <section class="panel">${ListaTareas({
+      tareas, mostrarEvento: false, vacio: 'Este evento aún no tiene tareas',
+      puedeAvance: t => e.estado !== 'Cancelado' && R.puede(usuario, 'tarea.actualizar'),
+      acciones: t => gestiona ? `
+        ${Boton({ texto: 'Editar tarea', variante: 'fantasma', icono: 'editar', soloIcono: true, accion: 'editar-tarea', datos: { id: t.id } })}
+        ${t.estado !== 'Completada' ? Boton({ texto: 'Eliminar tarea', variante: 'fantasma-peligro', icono: 'borrar', soloIcono: true, accion: 'eliminar-tarea', datos: { id: t.id } }) : ''}` : '',
+    })}</section>`;
+  conAccionesTareas(panel, recargar, { eventoId: e.id });
+}
+
+// Manejadores reutilizados por la pestaña Tareas y la pantalla Tareas
+function conAccionesTareas(panel, recargar, { eventoId = null } = {}) {
+  panel.onchange = async ev => {
+    const sel = ev.target.closest('[data-avance]');
+    if (!sel) return;
+    const r = await ejecutar(() => M.actualizarProgreso(db, { usuario }, Number(sel.dataset.avance), { avance: sel.value }, hoy()),
+      x => `Avance actualizado: ${x.avance}% (${x.estado})`);
+    recargar(r.ok);
+  };
+  panel.onclick = async ev => {
+    const b = ev.target.closest('[data-accion]');
+    if (!b) return;
+    const id = Number(b.dataset.id);
+    if (b.dataset.accion === 'nueva-tarea') modalTarea(eventoId, null, recargar);
+    if (b.dataset.accion === 'editar-tarea') modalTarea(null, db.get('SELECT * FROM tareas WHERE id = ?', [id]), recargar);
+    if (b.dataset.accion === 'eliminar-tarea') {
+      const t = db.get('SELECT titulo FROM tareas WHERE id = ?', [id]);
+      if (!(await confirmar(`¿Eliminar la tarea "${t.titulo}"?`, { textoAceptar: 'Eliminar' }))) return;
+      const r = await ejecutar(() => M.eliminarTarea(db, usuario, id), 'Tarea eliminada');
       if (r.ok) recargar();
+    }
+  };
+}
+
+// Modal reutilizable para crear / editar una tarea
+function modalTarea(eventoId, t, despues) {
+  const evId = t?.evento_id ?? eventoId;
+  const ev = db.get('SELECT * FROM eventos WHERE id = ?', [evId]);
+  const confirmados = db.all(`SELECT p.id, p.nombre FROM inscripciones i JOIN participantes p ON p.id = i.participante_id
+      WHERE i.evento_id = ? AND i.estado = 'Confirmado' ORDER BY p.nombre`, [evId]);
+  abrirModal({
+    titulo: t ? 'Editar tarea' : `Nueva tarea · ${ev.titulo}`,
+    contenido: Formulario({ id: 'form-tarea', cancelarAccion: 'cerrar-modal', textoEnviar: t ? 'Guardar' : 'Asignar tarea', campos: [
+      Campo({ nombre: 'titulo', etiqueta: 'Tarea', valor: t?.titulo, requerido: true, placeholder: 'Ej. Confirmar catering' }),
+      Campo({ nombre: 'descripcion', etiqueta: 'Descripción', tipo: 'textarea', valor: t?.descripcion }),
+      Campo({ nombre: 'responsable_id', etiqueta: 'Responsable (asistente confirmado)', valor: t?.responsable_id,
+        opciones: confirmados.map(p => ({ valor: p.id, texto: p.nombre })), ayuda: confirmados.length ? 'Recibirá un aviso en su portal' : 'Aún no hay asistentes confirmados: la tarea quedará sin asignar' }),
+      Campo({ nombre: 'prioridad', etiqueta: 'Prioridad', valor: t?.prioridad ?? 'Media', opciones: M.PRIORIDADES, requerido: true, ancho: 'medio' }),
+      Campo({ nombre: 'fecha_limite', etiqueta: 'Fecha límite', tipo: 'date', valor: t?.fecha_limite ?? ev.fecha, requerido: true, min: hoy(), max: ev.fecha, ancho: 'medio' }),
+    ] }),
+    onMount: caja => {
+      const form = caja.querySelector('form');
+      form.onsubmit = async x => {
+        x.preventDefault();
+        const r = await ejecutar(() => M.guardarTarea(db, usuario, { ...leerFormulario(form), evento_id: evId }, { id: t?.id ?? null, hoy: hoy() }),
+          t ? 'Tarea actualizada' : 'Tarea asignada. El responsable recibió un aviso.', form);
+        if (r.ok) { cerrarModal(); despues(); }
+      };
     },
-    'nuevo-participante': () => modalParticipante(null, async nuevoId => {
-      const r = await ejecutar(() => R.inscribir(db, usuario, id, nuevoId, hoy()), estado => `Participante registrado e inscrito (${estado})`);
-      recargar();
-      return r;
-    }),
-    exportar: () => descargarCSV(`inscritos-evento-${id}.csv`, inscripciones.map(i => ({ ...i, asistio: i.asistio ? 'Sí' : 'No' })), [
-      { campo: 'nombre', titulo: 'Nombre' }, { campo: 'email', titulo: 'Correo' }, { campo: 'empresa', titulo: 'Empresa' },
-      { campo: 'estado', titulo: 'Estado' }, { campo: 'asistio', titulo: 'Asistió' }, { campo: 'fecha_registro', titulo: 'Registro' },
-    ]),
   });
 }
 
-// ================================================================ Modal reutilizable: participante
+// ---------------------------------------------------------------- Pestaña: Comunicación
+function pestanaComunicacion(panel, e, { recargar }) {
+  const puedeEnviar = R.puede(usuario, 'comunicado.enviar') && R.puede(usuario, 'evento.editar', e) && e.fecha >= hoy();
+  const mensajes = db.all(`SELECT m.*, u.nombre AS usuario, p.nombre AS participante FROM mensajes m
+      LEFT JOIN usuarios u ON u.id = m.autor_usuario_id LEFT JOIN participantes p ON p.id = m.autor_participante_id
+      WHERE m.evento_id = ? ORDER BY m.id DESC`, [e.id]);
+  const avisos = db.all(`SELECT n.*, p.nombre AS participante FROM notificaciones n JOIN participantes p ON p.id = n.participante_id
+      WHERE n.evento_id = ? ORDER BY n.id DESC LIMIT 30`, [e.id]);
+  const conteo = s => M.correosDeSegmento(db, e.id, s).length;
+  panel.innerHTML = `
+    <div class="dos-columnas">
+      <section class="panel">
+        <h2>Enviar comunicado</h2>
+        ${puedeEnviar ? Formulario({ id: 'form-comunicado', textoEnviar: 'Enviar comunicado', campos: [
+          Campo({ nombre: 'segmento', etiqueta: 'Para', requerido: true, valor: 'Todos',
+            opciones: M.SEGMENTOS.map(s => ({ valor: s, texto: `${s} (${conteo(s)})` })) }),
+          Campo({ nombre: 'asunto', etiqueta: 'Asunto', requerido: true, placeholder: 'Ej. Cambio de sala' }),
+          Campo({ nombre: 'cuerpo', etiqueta: 'Mensaje', tipo: 'textarea', requerido: true }),
+        ] }) + `<p class="tenue chico">Cada destinatario lo recibe como aviso en su portal. ${Boton({ texto: 'Abrir también en mi correo', variante: 'enlace', icono: 'enviar', accion: 'mailto' })}</p>`
+        : '<p class="tenue">Solo el organizador del evento puede enviar comunicados, y solo antes de que el evento ocurra.</p>'}
+      </section>
+      <section class="panel"><h2>Mensajes</h2>${ListaMensajes(mensajes, { conAccion: R.puede(usuario, 'mensajes.ver'), vacio: 'Aún no hay mensajes en este evento' })}</section>
+    </div>
+    <section class="panel"><h2>Avisos enviados automáticamente</h2>
+      <p class="tenue chico">Inscripciones, lista de espera, tareas, cambios y comunicados de este evento.</p>
+      ${TablaAvisos(avisos)}</section>`;
+
+  const form = panel.querySelector('#form-comunicado');
+  if (form) form.onsubmit = async x => {
+    x.preventDefault();
+    const r = await ejecutar(() => M.enviarComunicado(db, usuario, e.id, leerFormulario(form), hoy()), n => `Comunicado enviado a ${n} asistente(s)`, form);
+    if (r.ok) recargar();
+  };
+  panel.onclick = async x => {
+    const b = x.target.closest('[data-accion]');
+    if (!b) return;
+    if (b.dataset.accion === 'mensaje-leido') {
+      const r = await ejecutar(() => M.marcarMensajeLeido(db, usuario, Number(b.dataset.id)), 'Mensaje marcado como leído');
+      if (r.ok) recargar();
+    }
+    if (b.dataset.accion === 'mailto' && form) {
+      const d = leerFormulario(form);
+      const correos = M.correosDeSegmento(db, e.id, d.segmento);
+      if (!correos.length) { toast('Ese grupo no tiene asistentes', 'error'); return; }
+      location.href = `mailto:?bcc=${encodeURIComponent(correos.join(','))}&subject=${encodeURIComponent(d.asunto || e.titulo)}&body=${encodeURIComponent(d.cuerpo || '')}`;
+    }
+  };
+}
+
+// ---------------------------------------------------------------- Modales de enlaces
+function modalEnlace(titulo, explicacion, ruta) {
+  const url = `${location.origin}${location.pathname}${ruta}`;
+  abrirModal({
+    titulo,
+    contenido: `<p>${esc(explicacion)}</p>
+      <div class="campo"><label for="enlace-url">Enlace</label><input id="enlace-url" readonly value="${esc(url)}"></div>
+      <div class="form-acciones">${Boton({ texto: 'Abrir', variante: 'secundario', href: ruta })}${Boton({ texto: 'Copiar enlace', icono: 'enlace', accion: 'copiar' })}</div>`,
+    onMount: caja => caja.addEventListener('click', async x => {
+      if (!x.target.closest('[data-accion="copiar"]')) return;
+      try { await navigator.clipboard.writeText(url); toast('Enlace copiado'); } catch { caja.querySelector('#enlace-url').select(); toast('Selecciona y copia el enlace', 'error'); }
+    }),
+  });
+}
+
+async function modalPortal(participanteId) {
+  const r = await ejecutar(() => M.obtenerAccesoPortal(db, usuario, participanteId));
+  if (!r.ok) return;
+  const p = db.get('SELECT nombre FROM participantes WHERE id = ?', [participanteId]);
+  modalEnlace(`Portal de ${p.nombre}`, 'Enlace personal: con él, el asistente ve sus eventos, sus tareas y sus avisos, actualiza el avance de sus tareas y escribe al organizador. No lo compartas con otras personas.', `#/portal/${r.r}`);
+}
+
+// ================================================================ Modal reutilizable: participante (formulario de asistente)
 function modalParticipante(p, despues = null) {
   abrirModal({
-    titulo: p ? 'Editar participante' : 'Nuevo participante',
-    contenido: Formulario({ id: 'form-participante', cancelarAccion: 'cerrar-modal', textoEnviar: p ? 'Guardar' : 'Registrar', campos: [
-      Campo({ nombre: 'nombre', etiqueta: 'Nombre completo', valor: p?.nombre, requerido: true, autocompletar: 'name' }),
-      Campo({ nombre: 'email', etiqueta: 'Correo', tipo: 'email', valor: p?.email, requerido: true, autocompletar: 'email' }),
-      Campo({ nombre: 'empresa', etiqueta: 'Empresa', valor: p?.empresa ?? 'Global Consulting Services', ancho: 'medio' }),
-      Campo({ nombre: 'area', etiqueta: 'Área', valor: p?.area, ancho: 'medio' }),
-      Campo({ nombre: 'telefono', etiqueta: 'Teléfono', tipo: 'tel', valor: p?.telefono, ayuda: '10 dígitos (opcional)', autocompletar: 'tel' }),
-    ] }),
+    titulo: p ? 'Editar asistente' : 'Registrar asistente',
+    contenido: FormularioAsistente({ id: 'form-participante', p: p ?? {}, cancelarAccion: 'cerrar-modal', textoEnviar: p ? 'Guardar' : 'Registrar' }),
     onMount: caja => {
       const form = caja.querySelector('form');
       form.onsubmit = async ev => {
         ev.preventDefault();
-        const r = await ejecutar(() => R.guardarParticipante(db, usuario, leerFormulario(form), p?.id ?? null), despues ? null : 'Participante guardado', form);
+        const r = await ejecutar(() => R.guardarParticipante(db, usuario, leerFormulario(form), p?.id ?? null), despues ? null : 'Asistente guardado', form);
         if (!r.ok) return;
         cerrarModal();
         if (despues) await despues(r.r); else render();
@@ -541,6 +822,7 @@ function pantallaParticipantes() {
       { titulo: 'Teléfono', render: p => esc(p.telefono) || '—' },
       { titulo: 'Eventos', render: p => `${p.eventos} inscrito(s) · ${p.asistencias} asistencia(s)` },
       { titulo: 'Acciones', clase: 'acciones', render: p => `
+        ${Boton({ texto: 'Enlace del portal', variante: 'fantasma', icono: 'enlace', soloIcono: true, accion: 'portal', datos: { id: p.id } })}
         ${Boton({ texto: 'Editar', variante: 'fantasma', icono: 'editar', soloIcono: true, accion: 'editar', datos: { id: p.id } })}
         ${R.puede(usuario, 'participante.eliminar') ? Boton({ texto: 'Eliminar', variante: 'fantasma-peligro', icono: 'borrar', soloIcono: true, accion: 'eliminar', datos: { id: p.id } }) : ''}` },
     ] });
@@ -550,6 +832,7 @@ function pantallaParticipantes() {
 
   alClic({
     nuevo: () => modalParticipante(null),
+    portal: ({ id }) => modalPortal(Number(id)),
     editar: ({ id }) => modalParticipante(db.get('SELECT * FROM participantes WHERE id = ?', [Number(id)])),
     eliminar: async ({ id }) => {
       const p = db.get('SELECT nombre FROM participantes WHERE id = ?', [Number(id)]);
@@ -665,6 +948,225 @@ function pantallaBitacora() {
       location.reload();
     },
   });
+}
+
+// ================================================================ Pantalla: Tareas (seguimiento de progreso)
+function pantallaTareas() {
+  const esOrganizador = usuario.rol === 'Organizador';
+  const eventos = db.all(`SELECT id, titulo FROM eventos WHERE estado <> 'Cancelado' ${esOrganizador ? 'AND organizador_id = ?' : ''} ORDER BY fecha`, esOrganizador ? [usuario.id] : []);
+  const responsables = db.all('SELECT DISTINCT p.id, p.nombre FROM tareas t JOIN participantes p ON p.id = t.responsable_id ORDER BY p.nombre');
+  const f0 = { evento: '', estado: '', responsable: '', vencidas: parametros.get('vencidas') === '1' };
+
+  contenido().innerHTML = `
+    ${EncabezadoPagina({ titulo: 'Tareas', subtitulo: esOrganizador ? 'Tareas de los eventos que organizas' : 'Seguimiento de las tareas de todos los eventos' })}
+    <section class="kpis" id="kpis-tareas" aria-label="Indicadores de tareas"></section>
+    <div class="dos-columnas form-layout">
+      <div>
+        <form class="filtros panel filtros-tareas" id="filtros-tareas" role="search">
+          <div class="campo"><label for="ft-evento">Evento</label><select id="ft-evento" name="evento"><option value="">Todos</option>
+            ${eventos.map(e => `<option value="${e.id}">${esc(e.titulo)}</option>`).join('')}</select></div>
+          <div class="campo"><label for="ft-estado">Estado</label><select id="ft-estado" name="estado"><option value="">Todos</option>
+            ${M.ESTADOS_TAREA.map(x => `<option>${x}</option>`).join('')}</select></div>
+          <div class="campo"><label for="ft-resp">Responsable</label><select id="ft-resp" name="responsable"><option value="">Todos</option><option value="sin">Sin asignar</option>
+            ${responsables.map(p => `<option value="${p.id}">${esc(p.nombre)}</option>`).join('')}</select></div>
+          <label class="check"><input type="checkbox" name="vencidas" ${f0.vencidas ? 'checked' : ''}><span>Solo vencidas</span></label>
+        </form>
+        <section class="panel" id="lista-tareas" aria-live="polite"></section>
+      </div>
+      <aside class="panel"><h2>Avance por evento</h2><div id="avance-eventos"></div></aside>
+    </div>`;
+
+  const form = document.getElementById('filtros-tareas');
+  const pintar = () => {
+    const f = leerFormulario(form);
+    const filtro = { eventoId: f.evento || null, estado: f.estado, responsableId: f.responsable || null, soloVencidas: !!f.vencidas, organizadorId: esOrganizador ? usuario.id : null };
+    const tareas = M.listarTareas(db, filtro, hoy());
+    const todas = M.resumenTareas(M.listarTareas(db, { organizadorId: filtro.organizadorId }, hoy()));
+    document.getElementById('kpis-tareas').innerHTML = `
+      ${TarjetaKPI({ titulo: 'Avance general', valor: `${todas.avance}%`, detalle: `${todas.total} tareas`, icono: 'tarea', tono: 'morado' })}
+      ${TarjetaKPI({ titulo: 'Completadas', valor: todas.completadas, icono: 'check', tono: 'verde' })}
+      ${TarjetaKPI({ titulo: 'En progreso', valor: todas.enProgreso, detalle: `${todas.pendientes} pendientes`, icono: 'reloj', tono: 'azul' })}
+      ${TarjetaKPI({ titulo: 'Vencidas', valor: todas.vencidas, detalle: `${todas.sinAsignar} sin asignar`, icono: 'cancelar', tono: todas.vencidas ? 'rojo' : 'verde' })}`;
+    document.getElementById('lista-tareas').innerHTML = `<p class="tenue">${tareas.length} tarea(s)</p>` + ListaTareas({
+      tareas, vacio: 'No hay tareas con esos filtros',
+      puedeAvance: t => t.estado_evento !== 'Cancelado' && R.puede(usuario, 'tarea.actualizar'),
+      acciones: t => {
+        const ev = db.get('SELECT * FROM eventos WHERE id = ?', [t.evento_id]);
+        return R.puede(usuario, 'tarea.gestionar') && R.puede(usuario, 'evento.editar', ev) && ev.estado !== 'Cancelado' && ev.fecha >= hoy()
+          ? Boton({ texto: 'Editar tarea', variante: 'fantasma', icono: 'editar', soloIcono: true, accion: 'editar-tarea', datos: { id: t.id } }) : '';
+      },
+    });
+    const avance = db.all(`SELECT v.* FROM v_avance_tareas v JOIN eventos e ON e.id = v.evento_id
+        WHERE v.total > 0 AND e.estado <> 'Cancelado' ${esOrganizador ? 'AND e.organizador_id = ?' : ''} ORDER BY v.fecha`, esOrganizador ? [usuario.id] : []);
+    document.getElementById('avance-eventos').innerHTML = avance.length ? `<ul class="avance-eventos">${avance.map(a => `<li>
+        <a class="enlace-fuerte" href="#/eventos/${a.evento_id}?tab=tareas">${esc(a.titulo)}</a>
+        <span class="tenue chico">${esc(fechaLarga(a.fecha))} · ${a.completadas}/${a.total} completadas${a.sin_asignar ? ` · ${a.sin_asignar} sin asignar` : ''}</span>
+        ${BarraProgreso(a.avance_promedio, `Avance de ${a.titulo}`)}<span class="chico">${a.avance_promedio}%</span></li>`).join('')}</ul>` : EstadoVacio('Sin tareas');
+  };
+  form.oninput = pintar;
+  form.onsubmit = x => x.preventDefault();
+  pintar();
+  conAccionesTareas(contenido(), () => pintar());
+}
+
+// ================================================================ Pantalla: Comunicación
+function pantallaComunicacion() {
+  const recibidos = db.all(`SELECT m.*, p.nombre AS participante, e.titulo AS evento FROM mensajes m
+      JOIN participantes p ON p.id = m.autor_participante_id JOIN eventos e ON e.id = m.evento_id
+      WHERE m.direccion = 'Asistente a organizador' ORDER BY m.leido, m.id DESC`);
+  const enviados = db.all(`SELECT m.*, u.nombre AS usuario, e.titulo AS evento FROM mensajes m
+      JOIN usuarios u ON u.id = m.autor_usuario_id JOIN eventos e ON e.id = m.evento_id
+      WHERE m.direccion = 'Organizador a asistentes' ORDER BY m.id DESC`);
+  const avisos = db.all(`SELECT n.*, p.nombre AS participante, e.titulo AS evento FROM notificaciones n
+      JOIN participantes p ON p.id = n.participante_id LEFT JOIN eventos e ON e.id = n.evento_id ORDER BY n.id DESC LIMIT 15`);
+  const porTipo = db.all('SELECT tipo, COUNT(*) AS n FROM notificaciones GROUP BY tipo ORDER BY n DESC');
+  const sinLeer = recibidos.filter(m => !m.leido).length;
+  contenido().innerHTML = `
+    ${EncabezadoPagina({ titulo: 'Comunicación', subtitulo: 'Mensajes de los asistentes, comunicados enviados y avisos automáticos' })}
+    <section class="kpis" aria-label="Indicadores de comunicación">
+      ${TarjetaKPI({ titulo: 'Mensajes sin leer', valor: sinLeer, detalle: `${recibidos.length} recibidos`, icono: 'mensaje', tono: sinLeer ? 'rojo' : 'verde' })}
+      ${TarjetaKPI({ titulo: 'Comunicados enviados', valor: enviados.length, detalle: `${enviados.reduce((s, m) => s + m.destinatarios, 0)} destinatarios`, icono: 'enviar', tono: 'azul' })}
+      ${TarjetaKPI({ titulo: 'Avisos automáticos', valor: db.get('SELECT COUNT(*) AS n FROM notificaciones').n, detalle: porTipo.slice(0, 2).map(t => `${t.n} ${t.tipo.toLowerCase()}`).join(' · '), icono: 'campana', tono: 'morado' })}
+      ${TarjetaKPI({ titulo: 'Avisos leídos', valor: `${Math.round(100 * (db.get('SELECT AVG(leida) AS a FROM notificaciones').a || 0))}%`, detalle: 'por los asistentes', icono: 'check', tono: 'amarillo' })}
+    </section>
+    <div class="dos-columnas">
+      <section class="panel"><h2>Bandeja de entrada (asistentes)</h2>${ListaMensajes(recibidos, { conAccion: true, vacio: 'No hay mensajes de asistentes' })}</section>
+      <section class="panel"><h2>Comunicados enviados</h2>${ListaMensajes(enviados, { vacio: 'Aún no se han enviado comunicados' })}</section>
+    </div>
+    <section class="panel"><h2>Últimos avisos automáticos</h2>${TablaAvisos(avisos, { mostrarEvento: true })}</section>`;
+  alClic({
+    'mensaje-leido': async ({ id }) => {
+      const r = await ejecutar(() => M.marcarMensajeLeido(db, usuario, Number(id)), 'Mensaje marcado como leído');
+      if (r.ok) render();
+    },
+  });
+}
+
+// ================================================================ Pantallas públicas del asistente
+function marcoPublico(contenidoHtml) {
+  app.innerHTML = `<div class="publico">
+    <header class="publico-barra"><div class="logo"><span class="logo-marca" aria-hidden="true">G</span><span class="logo-texto">GCS <b>Eventos</b></span></div>
+      ${usuario ? Boton({ texto: 'Volver al sistema', variante: 'fantasma', icono: 'volver', href: '#/inicio' }) : ''}</header>
+    <main id="contenido" class="publico-contenido" tabindex="-1">${contenidoHtml}</main></div>`;
+}
+
+function pantallaPortal(token) {
+  let datos;
+  try { datos = M.datosPortal(db, token, hoy()); } catch (err) {
+    marcoPublico(`<section class="panel"><h1>Enlace no válido</h1><p>${esc(err.message)}. Pide al organizador que te envíe tu enlace personal.</p></section>`);
+    return;
+  }
+  const { participante: p, eventos, tareas, avisos, mensajes, noLeidos } = datos;
+  const pendientes = tareas.filter(t => t.estado !== 'Completada');
+  const proximos = eventos.filter(e => e.fecha >= hoy() && e.estado !== 'Cancelado');
+  let pestana = parametros.get('tab') || (noLeidos ? 'avisos' : 'tareas');
+
+  marcoPublico(`
+    ${EncabezadoPagina({ titulo: `Hola, ${p.nombre.split(' ')[0]}`, subtitulo: `Portal del asistente · ${p.email}` })}
+    <section class="kpis" aria-label="Resumen">
+      ${TarjetaKPI({ titulo: 'Mis próximos eventos', valor: proximos.length, icono: 'eventos', tono: 'azul' })}
+      ${TarjetaKPI({ titulo: 'Tareas por hacer', valor: pendientes.length, detalle: `${tareas.filter(t => t.vencida).length} vencida(s)`, icono: 'tarea', tono: tareas.some(t => t.vencida) ? 'rojo' : 'morado' })}
+      ${TarjetaKPI({ titulo: 'Avisos sin leer', valor: noLeidos, icono: 'campana', tono: noLeidos ? 'amarillo' : 'verde' })}
+      ${TarjetaKPI({ titulo: 'Avance de mis tareas', valor: `${M.resumenTareas(tareas).avance}%`, icono: 'check', tono: 'verde' })}
+    </section>
+    <div id="zona-portal"></div>`);
+
+  const pintar = () => {
+    const z = document.getElementById('zona-portal');
+    z.innerHTML = Pestanas('portal', [
+      { clave: 'tareas', texto: 'Mis tareas', icono: 'tarea', contador: pendientes.length },
+      { clave: 'eventos', texto: 'Mis eventos', icono: 'calendario', contador: proximos.length },
+      { clave: 'avisos', texto: 'Avisos', icono: 'campana', contador: noLeidos || '' },
+      { clave: 'mensajes', texto: 'Escribir al organizador', icono: 'mensaje' },
+    ], pestana);
+    const panel = document.getElementById('panel-portal');
+    if (pestana === 'tareas') {
+      panel.innerHTML = `<section class="panel"><h2>Mis tareas</h2><p class="tenue chico">Actualiza tu avance: el organizador lo ve al momento.</p>
+        ${ListaTareas({ tareas, mostrarResponsable: false, vacio: 'No tienes tareas asignadas', puedeAvance: t => t.estado_evento !== 'Cancelado' })}</section>`;
+    } else if (pestana === 'eventos') {
+      panel.innerHTML = `<div class="dos-columnas"><section class="panel"><h2>Mis eventos</h2>
+          ${eventos.length ? `<ul class="lista-eventos">${eventos.map(e => `<li><div class="tarjeta-evento">
+            <div class="fecha-chip"><span>${esc(fechaLarga(e.fecha).split(' ').slice(2, 3).join(' ').toUpperCase())}</span><b>${Number(e.fecha.slice(8))}</b></div>
+            <div class="tarjeta-cuerpo"><p class="tarjeta-titulo">${esc(e.titulo)}</p><p class="tenue">${esc(e.hora_inicio)}–${esc(e.hora_fin)} · ${esc(e.sede)}</p></div>
+            <div>${Insignia(e.estado === 'Cancelado' ? 'Cancelado' : e.mi_estado)}</div></div></li>`).join('')}</ul>` : EstadoVacio('No estás inscrito a ningún evento')}
+        </section><section class="panel"><h2>Calendario</h2><div id="cal-portal"></div></section></div>`;
+      montarCalendario(document.getElementById('cal-portal'), { hoy: hoy(), fechaInicial: proximos[0]?.fecha || hoy(), cargarEventos: eventosDelMes({ participanteId: p.id }), compacto: true });
+    } else if (pestana === 'avisos') {
+      panel.innerHTML = `<section class="panel"><div class="panel-encabezado"><h2>Avisos</h2>
+          ${noLeidos ? Boton({ texto: 'Marcar todo como leído', variante: 'secundario', icono: 'check', accion: 'todos-leidos' }) : ''}</div>
+        ${ListaAvisos(avisos, { conAccion: true })}</section>`;
+    } else {
+      const activos = eventos.filter(e => e.fecha >= hoy() && e.estado !== 'Cancelado');
+      panel.innerHTML = `<div class="dos-columnas"><section class="panel"><h2>Escribir al organizador</h2>
+          ${activos.length ? Formulario({ id: 'form-mensaje', textoEnviar: 'Enviar mensaje', campos: [
+            Campo({ nombre: 'evento_id', etiqueta: 'Evento', requerido: true, valor: activos[0].id, opciones: activos.map(e => ({ valor: e.id, texto: e.titulo })) }),
+            Campo({ nombre: 'asunto', etiqueta: 'Asunto', requerido: true }),
+            Campo({ nombre: 'cuerpo', etiqueta: 'Mensaje', tipo: 'textarea', requerido: true }),
+          ] }) : '<p class="tenue">No tienes eventos próximos.</p>'}</section>
+        <section class="panel"><h2>Mensajes que enviaste</h2>${ListaMensajes(mensajes.map(m => ({ ...m, participante: 'Tú', leido: 1 })), { vacio: 'Aún no has enviado mensajes' })}</section></div>`;
+      const form = document.getElementById('form-mensaje');
+      if (form) form.onsubmit = async x => {
+        x.preventDefault();
+        const r = await ejecutar(() => M.mensajeDeAsistente(db, token, leerFormulario(form).evento_id, leerFormulario(form), hoy()), 'Mensaje enviado al organizador', form);
+        if (r.ok) { parametros.set('tab', 'mensajes'); pantallaPortal(token); }
+      };
+    }
+  };
+  pintar();
+  const z = document.getElementById('contenido');
+  z.onclick = async x => {
+    const b = x.target.closest('[data-accion]');
+    if (!b) return;
+    if (b.dataset.accion === 'tab') { pestana = b.dataset.tab; history.replaceState(null, '', `#/portal/${token}?tab=${pestana}`); pintar(); document.getElementById(`tab-portal-${pestana}`)?.focus(); }
+    if (b.dataset.accion === 'todos-leidos' || b.dataset.accion === 'aviso-leido') {
+      const r = await ejecutar(() => M.marcarAvisosLeidos(db, token, b.dataset.id ? Number(b.dataset.id) : null));
+      if (r.ok) { parametros.set('tab', 'avisos'); pantallaPortal(token); }
+    }
+  };
+  z.onchange = async x => {
+    const sel = x.target.closest('[data-avance]');
+    if (!sel) return;
+    const r = await ejecutar(() => M.actualizarProgreso(db, { participanteId: p.id }, Number(sel.dataset.avance), { avance: sel.value }, hoy()),
+      a => `Avance guardado: ${a.avance}% (${a.estado})`);
+    parametros.set('tab', 'tareas'); pantallaPortal(token);
+    return r;
+  };
+}
+
+function pantallaRegistro(eventoId) {
+  const e = db.get('SELECT * FROM v_eventos_resumen WHERE id = ?', [eventoId]);
+  if (!e || e.estado === 'Cancelado' || e.fecha < hoy()) {
+    marcoPublico(`<section class="panel"><h1>Registro no disponible</h1><p>${!e ? 'El evento no existe.' : e.estado === 'Cancelado' ? 'El evento fue cancelado.' : 'El evento ya se realizó.'}</p></section>`);
+    return;
+  }
+  const m = R.metricasEvento(e, hoy());
+  marcoPublico(`
+    <div class="dos-columnas form-layout">
+      <section class="panel">
+        <p class="tenue">Registro al evento</p><h1 tabindex="-1">${esc(e.titulo)}</h1>
+        <p class="insignias">${Insignia(e.tipo)} ${m.lleno ? Insignia('Lista de espera') : `<span class="tenue">${m.disponibles} lugar(es) disponible(s)</span>`}</p>
+        ${FormularioAsistente({ id: 'form-registro', textoEnviar: m.lleno ? 'Anotarme en lista de espera' : 'Registrarme', conPrivacidad: true })}
+      </section>
+      <aside class="panel"><h2>Detalles</h2><dl class="datos">
+        <div><dt>Fecha</dt><dd>${esc(fechaLarga(e.fecha))}</dd></div><div><dt>Horario</dt><dd>${esc(e.hora_inicio)} – ${esc(e.hora_fin)}</dd></div>
+        <div><dt>Sede</dt><dd>${esc(e.sede)}</dd></div><div><dt>Descripción</dt><dd>${esc(e.descripcion) || '—'}</dd></div></dl>
+        ${BarraProgreso(m.ocupacion)}<p class="tenue chico">${m.confirmados} de ${e.capacidad} lugares ocupados</p></aside>
+    </div>`);
+  const form = document.getElementById('form-registro');
+  form.onsubmit = async x => {
+    x.preventDefault();
+    const d = leerFormulario(form);
+    const r = await ejecutar(() => M.autoRegistro(db, eventoId, d, hoy()), null, form);
+    if (!r.ok) return;
+    const { estado, token, nombre } = r.r;
+    document.getElementById('contenido').innerHTML = `<section class="panel resultado-registro">
+      <span class="kpi-icono ${estado === 'Confirmado' ? 'tono-verde' : 'tono-amarillo'}">${Icono(estado === 'Confirmado' ? 'check' : 'reloj')}</span>
+      <h1 tabindex="-1">${estado === 'Confirmado' ? '¡Listo, tu lugar está confirmado!' : 'Quedaste en lista de espera'}</h1>
+      <p>${esc(nombre)}, ${estado === 'Confirmado' ? `te esperamos en "${esc(e.titulo)}" el ${esc(fechaLarga(e.fecha))}.` : 'el evento está lleno; si se libera un lugar te confirmaremos automáticamente.'}</p>
+      <p>Guarda tu enlace personal: ahí verás tus avisos y tareas, y podrás escribir al organizador.</p>
+      <p>${Boton({ texto: 'Ir a mi portal', icono: 'enlace', href: `#/portal/${token}` })}</p></section>`;
+    document.querySelector('#contenido h1').focus();
+  };
 }
 
 iniciar();

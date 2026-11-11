@@ -164,6 +164,7 @@ code { background: var(--gris-fondo); padding: 0 .3em; border-radius: 4px; font-
 .progreso-verde { background: #2bb673; }
 .progreso-amarillo { background: #e3a008; }
 .progreso-rojo { background: #e0483e; }
+.progreso-azul { background: #3b82c4; }
 
 /* ---------------- Tablas */
 .tabla-contenedor { overflow-x: auto; }
@@ -265,3 +266,112 @@ input:focus, select:focus, textarea:focus { border-color: var(--acento); outline
   .tabla .acciones { text-align: left; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* =================================================================== Actividad 4 */
+
+/* ---------------- Pestañas */
+.pestanas { display: flex; gap: .25rem; border-bottom: 1px solid var(--borde); margin-bottom: 1.25rem; overflow-x: auto; }
+.pestana { display: inline-flex; align-items: center; gap: .45rem; background: none; border: 0; border-bottom: 3px solid transparent;
+  padding: .7rem 1rem; font: inherit; font-weight: 600; color: var(--tenue); cursor: pointer; white-space: nowrap; margin-bottom: -1px; }
+.pestana:hover { color: var(--texto); }
+.pestana.activa { color: var(--acento); border-bottom-color: var(--acento); }
+.contador { background: var(--gris-fondo); color: var(--texto); border-radius: 999px; padding: 0 .5rem; font-size: .75rem; }
+.pestana.activa .contador { background: rgba(18, 122, 108, .12); color: var(--acento); }
+
+/* ---------------- Calendario */
+.calendario { user-select: none; }
+.cal-encabezado { display: flex; align-items: center; justify-content: space-between; margin-bottom: .5rem; }
+.cal-titulo { margin: 0; font-weight: 700; }
+.cal-semana, .cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.cal-semana span { text-align: center; font-size: .72rem; color: var(--tenue); font-weight: 600; padding: .2rem 0; }
+.cal-dia { min-height: 88px; border: 1px solid var(--borde); border-radius: 8px; padding: 4px; display: flex; flex-direction: column; gap: 3px; background: #fff; min-width: 0; }
+.cal-dia.vacio { border: 0; background: none; }
+.cal-dia.pasado { background: #fafbfc; }
+.cal-dia.hoy { border-color: var(--acento); box-shadow: inset 0 0 0 1px var(--acento); }
+.cal-dia.seleccionado { background: rgba(18, 122, 108, .08); border-color: var(--acento); }
+.cal-num { align-self: flex-start; border: 0; background: none; font: inherit; font-size: .82rem; font-weight: 600; color: var(--texto);
+  border-radius: 6px; padding: .1rem .35rem; cursor: pointer; min-width: 26px; min-height: 26px; }
+.cal-num:hover { background: var(--gris-fondo); }
+.cal-dia.hoy .cal-num { background: var(--acento); color: #fff; }
+.cal-evento { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: .72rem; line-height: 1.25;
+  background: var(--azul-fondo); color: var(--azul); border-radius: 5px; padding: 2px 5px; text-decoration: none; overflow: hidden; word-break: break-word; }
+.cal-evento:hover { background: var(--azul); color: #fff; }
+.cal-evento.cancelado { background: var(--gris-fondo); color: var(--tenue); text-decoration: line-through; }
+.cal-mas { font-size: .7rem; color: var(--tenue); padding-left: 4px; }
+.calendario.compacto .cal-dia { min-height: 44px; align-items: center; padding: 2px; }
+.calendario.compacto .cal-num { align-self: center; }
+.cal-puntos { display: flex; gap: 2px; height: 6px; }
+.cal-puntos i { width: 6px; height: 6px; border-radius: 50%; background: var(--acento); }
+.cal-puntos i.cancelado { background: #c5ccd5; }
+.cal-layout { grid-template-columns: 1.6fr 1fr; }
+
+/* ---------------- Vista segmentada (Lista / Calendario) */
+.segmentado { display: inline-flex; }
+.segmentado .btn { border-radius: 0; }
+.segmentado .btn:first-child { border-radius: 9px 0 0 9px; }
+.segmentado .btn:last-child { border-radius: 0 9px 9px 0; }
+
+/* ---------------- Tareas y progreso */
+.resumen-progreso { display: grid; grid-template-columns: minmax(160px, 1fr) 2fr; gap: 1.25rem; align-items: center; }
+.resumen-progreso .progreso { margin-top: .35rem; }
+.conteos { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: .5rem 1rem; }
+.conteos li { display: flex; align-items: center; gap: .35rem; }
+.select-chico { min-height: 32px; padding: .2rem .4rem; font-size: .82rem; margin-top: .3rem; width: auto; }
+.fila-alerta td { background: #fff8f7; }
+.texto-rojo { color: var(--rojo); font-weight: 600; }
+.aviso-rojo { background: var(--rojo-fondo); color: var(--rojo); border-color: #f5c2bd; }
+.aviso-rojo a { color: var(--rojo); font-weight: 600; }
+.avance-eventos { list-style: none; padding: 0; margin: 0; display: grid; gap: 1rem; }
+.avance-eventos li { display: grid; gap: .2rem; }
+.filtros-tareas { grid-template-columns: repeat(3, 1fr) auto; align-items: end; }
+.check { display: inline-flex; gap: .5rem; align-items: flex-start; cursor: pointer; font-size: .9rem; }
+.check input { width: 18px; height: 18px; min-height: 0; margin-top: .15rem; accent-color: var(--acento); flex: none; }
+.filtros .check { align-self: center; padding-top: 1.2rem; }
+
+/* ---------------- Avisos y mensajes */
+.avisos, .mensajes { list-style: none; padding: 0; margin: 0; display: grid; gap: .6rem; }
+.avisos li { display: grid; grid-template-columns: auto 1fr auto; gap: .75rem; align-items: start; padding: .75rem; border: 1px solid var(--borde); border-radius: 10px; }
+.avisos li.no-leido { border-color: #b9d3f2; background: #f7fbff; }
+.avisos p, .mensajes p { margin: 0; }
+.avisos p + p { margin-top: .15rem; }
+.aviso-icono { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; }
+.tono-verde { background: var(--verde-fondo); color: var(--verde); }
+.tono-azul { background: var(--azul-fondo); color: var(--azul); }
+.tono-rojo { background: var(--rojo-fondo); color: var(--rojo); }
+.tono-morado { background: var(--morado-fondo); color: var(--morado); }
+.tono-amarillo { background: var(--amarillo-fondo); color: var(--amarillo); }
+.mensajes li { padding: .8rem 1rem; border-radius: 10px; border: 1px solid var(--borde); display: grid; gap: .3rem; }
+.mensajes li.de-asistente { border-left: 4px solid var(--morado); }
+.mensajes li.de-organizador { border-left: 4px solid var(--acento); }
+.mensajes li.no-leido { background: #faf7ff; }
+.mensajes .btn { justify-self: start; margin-top: .3rem; }
+.mensaje-cabeza { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+.mensaje-asunto { font-weight: 600; }
+
+/* ---------------- Páginas públicas (portal y auto-registro) */
+.publico { min-height: 100vh; }
+.publico-barra { display: flex; justify-content: space-between; align-items: center; padding: .75rem clamp(1rem, 3vw, 2.5rem); background: var(--marino); }
+.publico-barra .logo { margin: 0; }
+.publico-barra .btn { color: #dbe6f3; }
+.publico-contenido { max-width: 1200px; margin: 0 auto; padding: 2rem clamp(1rem, 3vw, 2.5rem) 4rem; }
+.publico-contenido:focus { outline: none; }
+.resultado-registro { max-width: 620px; margin: 2rem auto; text-align: center; display: grid; justify-items: center; gap: .25rem; }
+.resultado-registro .kpi-icono { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; }
+.resultado-registro .kpi-icono .icono { width: 32px; height: 32px; }
+
+@media (max-width: 1100px) { .cal-layout { grid-template-columns: 1fr; } }
+@media (max-width: 900px) {
+  .filtros-tareas { grid-template-columns: 1fr 1fr; }
+  .resumen-progreso { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  .cal-dia { min-height: 54px; }
+  .cal-evento { font-size: 0; padding: 0; height: 6px; border-radius: 3px; }
+  .filtros-tareas { grid-template-columns: 1fr; }
+  .avisos li { grid-template-columns: auto 1fr; }
+  .segmentado .btn span { display: none; }
+}
+
+.aviso-tipo { display: inline-flex; align-items: center; gap: .4rem; white-space: nowrap; }
+.aviso-icono.chico { width: 24px; height: 24px; border-radius: 6px; }
+.aviso-icono.chico .icono { width: 14px; height: 14px; }
