@@ -14,6 +14,27 @@ Prototipo funcional para **Global Consulting Services (GCS)**, desarrollado por 
 > | Widgets y estilos (Atlas UI) | Sistema de diseño en [`css/styles.css`](css/styles.css) |
 > | Roles de seguridad | Roles Administrador, Organizador y Colaborador |
 
+## Actividad 4: tareas, comunicación y componentes reutilizables
+
+| Entregable | Dónde |
+|---|---|
+| Definición del producto, decisiones y retos | [`docs/actividad-4.md`](docs/actividad-4.md) |
+| Modelo de datos con Evento, Asistente y Tarea (ERD) | [`database/diagrama-er.md`](database/diagrama-er.md) |
+| Microflujos modulares y reutilizables (con diagramas) | [`docs/microflujos.md`](docs/microflujos.md) |
+| Componentes reutilizables (calendario, formulario de asistentes…) | [`docs/componentes-reutilizables.md`](docs/componentes-reutilizables.md) |
+| Reporte de pruebas (60 casos) | [`docs/reporte-pruebas.md`](docs/reporte-pruebas.md) |
+| Capturas de las pantallas nuevas | [`docs/capturas-a4/`](docs/capturas-a4) |
+
+Pantallas nuevas:
+- **Tareas**: seguimiento de progreso.
+- **Comunicación**: bandeja, comunicados y avisos.
+- **Detalle del evento**: pestañas Asistentes, Tareas y Comunicación.
+- **Vista calendario** de la agenda.
+- **Portal del asistente** (`#/portal/…`).
+- **Auto-registro público** (`#/registro/…`).
+
+En la pantalla de login, "Usuarios de prueba" incluye los enlaces al portal y al auto-registro de ejemplo.
+
 ## 1. Definición del producto
 
 **Problema.** GCS organiza cada mes capacitaciones, talleres, conferencias y reuniones con clientes. Hoy los coordina con hojas de cálculo y correos, y eso provoca:
@@ -52,9 +73,10 @@ npm start          # abre http://localhost:8080
 | Organizador | organizador@gcs.com | Eventos2026 |
 | Colaborador | colaborador@gcs.com | Staff2026 |
 
-**Pruebas automáticas** de las reglas de negocio (14 casos):
+**Pruebas automáticas** de los microflujos (41 casos) y de interfaz (19 casos):
 ```bash
 npm install && npm test
+python -m http.server 8080 & python tests/e2e/interfaz_a4.py   # requiere: pip install playwright && playwright install chromium
 ```
 
 ## 3. Pantallas
